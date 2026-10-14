@@ -62,14 +62,16 @@ If the repository already exists on Windows, clone it into `~/src` from inside W
 
 Write a short product spec with these decisions:
 
-1. **First supported language:** Python.
-2. **First agent backend:** one API provider or one supported CLI agent. Do not build many provider adapters at once.
-3. **First verifier:** configured commands plus conservative Python syntax checks; selected tests are advisory until measured.
-4. **Winner condition:** configured full-suite command succeeds on the immutable candidate snapshot.
-5. **Integration behavior:** produce a patch or new branch for review; never silently commit to the user's current branch.
-6. **Initial concurrency:** two agents, adjustable down to one.
-7. **Default security policy:** no implicit secret inheritance; no hidden network permission; explicit setup-command policy.
-8. **Benchmark:** a fixed set of real tasks and baseline sequential runs using the same model, prompt budget, and test commands.
+1. **First supported language:** Python 3.12.
+2. **Toolchain:** `uv`, `ruff`, `mypy`, `pytest`, `asyncio`, SQLite, and Typer.
+3. **First agent backend:** RaceGreen's own tool loop with one OpenAI-compatible provider. Do not build many provider adapters at once.
+4. **First verifier:** configured commands plus conservative Python syntax checks; selected tests are advisory until measured.
+5. **Winner condition:** configured full-suite command succeeds on the immutable candidate snapshot.
+6. **Integration behavior:** produce a patch or new branch for review; never silently commit to the user's current branch.
+7. **Initial concurrency:** two agents, adjustable down to one.
+8. **Default security policy:** no implicit secret inheritance; no hidden network permission; explicit setup-command policy.
+9. **Benchmark:** compare sequential, racing, and best-of-N wait-for-all using the same model, prompt budget, and test commands. Track full-suite runs avoided; selected tests do not shorten the full-suite critical path.
+10. **False-winner measurement:** every task includes held-out tests that agents do not see. A false winner passes the visible full suite but fails held-out tests.
 
 Record a threat model. Worktrees isolate Git changes, but they do not sandbox hostile code. If arbitrary repository code must be treated as hostile, add an OS-level execution boundary and evaluate its actual protections separately.
 
@@ -159,7 +161,7 @@ For each task, save:
 - Expected behavior and known flaky tests.
 - Baseline result, elapsed time, and model/provider cost.
 
-Run the current single-agent workflow first. Track success rate, time to candidate, test duration, cost, and common failure categories. This baseline is the comparison point for RaceGreen.
+Run sequential and best-of-N wait-for-all workflows before racing. Track success rate, verified time-to-patch, time to candidate, test duration, cost, full-suite runs avoided, false-winner rate from held-out tests, and common failure categories. These baselines are the comparison point for RaceGreen.
 
 **Exit gate:** you can reproduce baseline runs from a clean environment and explain every metric. Avoid quoting research figures until you have verified the exact paper and metric.
 
@@ -178,7 +180,7 @@ Implement these operations first:
 7. Track every resource RaceGreen creates so cleanup is scoped and safe.
 8. Recover or report partial setup after cancellation, crash, or disk exhaustion.
 
-Never use forced cleanup against user-owned worktrees. Do not use a shared writable venv. A safer initial approach is a separate environment per worktree and a shared package download cache, if the package manager supports it safely.
+Never use forced cleanup against user-owned worktrees. Do not use a shared writable venv. Use a separate environment per worktree with `uv` and a shared package download cache where supported; include environment creation in the workspace spin-up benchmark.
 
 **Exit gate:** repeated creation, interruption, and cleanup preserve the source repo, current branch, untracked files, and unrelated worktrees.
 
@@ -261,13 +263,12 @@ Distinguish deterministic test failures from flaky tests, missing dependencies, 
 
 ## 13. Phase 6 — Arbiter, winner, and loser cancellation
 
-Implement an explicit state machine and reject invalid transitions. A typical flow is:
+Implement two explicit state machines and reject invalid transitions. Run state and candidate state are independent because multiple candidates may verify concurrently:
 
 ```text
-PREPARING -> RUNNING -> CANDIDATE -> PREFILTERING
-          -> SELECTED_TESTS -> CONFIRMING -> WON
-                                         -> REJECTED -> RUNNING
-          -> EXHAUSTED | CANCELLED | FAILED
+Run:       PREPARING -> RUNNING -> EXHAUSTED | CANCELLED | FAILED
+Candidate: RECEIVED -> PREFILTERING -> SELECTED_TESTS -> CONFIRMING -> WON
+                                      \-> REJECTED
 ```
 
 Arbitration behavior:

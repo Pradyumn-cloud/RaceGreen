@@ -1,0 +1,85 @@
+# Byte-compiled / optimized / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
+MANIFEST
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# uv / pip tooling (keep uv.lock and pyproject.toml tracked)
+.uv/
+uv.toml.local
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Test / coverage / type-check caches
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
+.hypothesis/
+
+# cProfile / benchmark output
+*.prof
+.prof/
+
+# SQLite databases and sidecar files (run state, event store)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+
+# RaceGreen runtime artifacts and logs (default location is ~/.racegreen)
+.racegreen/
+logs/
+*.log
+
+# Local secrets and environment overrides (never commit credentials)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor and IDE settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
