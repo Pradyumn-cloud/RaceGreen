@@ -8,12 +8,20 @@ from racegreen.workspace.manager import UnsafeWorkspaceError, WorkspaceManager
 def test_dirty_repository_requires_explicit_opt_in(tmp_path: Path) -> None:
     pytest.importorskip("subprocess").run(["git", "init", str(tmp_path)], check=True)
     (tmp_path / "README").write_text("initial\n", encoding="utf-8")
+    pytest.importorskip("subprocess").run(["git", "-C", str(tmp_path), "add", "README"], check=True)
     pytest.importorskip("subprocess").run(
-        ["git", "-C", str(tmp_path), "add", "README"], check=True
-    )
-    pytest.importorskip("subprocess").run(
-        ["git", "-C", str(tmp_path), "-c", "user.name=Test", "-c", "user.email=test@example.com",
-         "commit", "-m", "initial"],
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "initial",
+        ],
         check=True,
     )
     (tmp_path / "README").write_text("changed\n", encoding="utf-8")
@@ -33,8 +41,16 @@ def test_worktree_lifecycle_preserves_source_files(tmp_path: Path) -> None:
     subprocess.run(["git", "-C", str(source), "add", "README"], check=True)
     subprocess.run(
         [
-            "git", "-C", str(source), "-c", "user.name=Test", "-c", "user.email=test@example.com",
-            "commit", "-m", "initial",
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "initial",
         ],
         check=True,
         capture_output=True,

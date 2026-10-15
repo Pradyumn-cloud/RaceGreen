@@ -1,3 +1,9 @@
+--- a/bug.py
++++ b/bug.py
+@@ -1,2 +1,2 @@
+ def answer() -> int:
+-    return 0
++    return 7
 --- a/tests/test_visible.py
 +++ b/tests/test_visible.py
 @@ -1,4 +1,4 @@

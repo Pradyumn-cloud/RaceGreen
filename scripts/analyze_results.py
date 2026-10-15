@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
 import random
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +13,11 @@ from typing import Any
 def analyze(records: list[dict[str, Any]]) -> dict[str, Any]:
     tasks = [record for record in records if record.get("event") == "task_result"]
     repair_tasks = [record for record in tasks if not record.get("control", False)]
-    resolved_times = [float(r["time_to_resolve_seconds"]) for r in repair_tasks
-                      if r.get("resolved") is True and isinstance(r.get("time_to_resolve_seconds"), (int, float))]
+    resolved_times = [
+        float(r["time_to_resolve_seconds"])
+        for r in repair_tasks
+        if r.get("resolved") is True and isinstance(r.get("time_to_resolve_seconds"), (int, float))
+    ]
     costs = [float(r["cost"]) for r in repair_tasks if isinstance(r.get("cost"), (int, float))]
     rng = random.Random(0)
     bootstrap: list[float] = []
@@ -24,8 +27,12 @@ def analyze(records: list[dict[str, Any]]) -> dict[str, Any]:
         bootstrap.append(sum(sample) / len(sample) if sample else 0.0)
     bootstrap.sort()
     ci = (
-        [bootstrap[int(len(bootstrap) * 0.025)], bootstrap[min(len(bootstrap) - 1, int(len(bootstrap) * 0.975))]]
-        if bootstrap else None
+        [
+            bootstrap[int(len(bootstrap) * 0.025)],
+            bootstrap[min(len(bootstrap) - 1, int(len(bootstrap) * 0.975))],
+        ]
+        if bootstrap
+        else None
     )
     strata: dict[str, dict[str, Any]] = {}
     for record in repair_tasks:
@@ -35,18 +42,16 @@ def analyze(records: list[dict[str, Any]]) -> dict[str, Any]:
         bucket["resolved_count"] += int(record.get("resolved") is True)
     curve = []
     for threshold in (30, 60, 120, 300, 600):
-        curve.append({"seconds": threshold, "resolved_count": sum(t <= threshold for t in resolved_times)})
+        curve.append(
+            {"seconds": threshold, "resolved_count": sum(t <= threshold for t in resolved_times)}
+        )
     durations = [
         float(record["duration_seconds"])
         for record in tasks
         if isinstance(record.get("duration_seconds"), (int, float))
     ]
     winners = [record for record in tasks if record.get("winner_declared") is True]
-    resolved = [
-        record
-        for record in winners
-        if record.get("held_out_passed") is True
-    ]
+    resolved = [record for record in winners if record.get("held_out_passed") is True]
     return {
         "task_count": len(tasks),
         "oracle_pass_count": sum(record.get("oracle_passed") is True for record in tasks),
@@ -81,7 +86,8 @@ def analyze(records: list[dict[str, Any]]) -> dict[str, Any]:
         "cost_per_resolved": sum(costs) / len(resolved_times) if resolved_times else None,
         "regret_seconds": (
             sum(resolved_times) - min(resolved_times) * len(resolved_times)
-            if resolved_times else None
+            if resolved_times
+            else None
         ),
         "solved_by_time_curve": curve,
     }

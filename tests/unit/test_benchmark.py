@@ -7,7 +7,6 @@ from pathlib import Path
 
 from benchmarks.tier1.generate import build_tasks
 
-
 ROOT = Path(__file__).parents[2]
 
 
@@ -63,15 +62,21 @@ def test_flaky_and_unrelated_contracts_are_explicit() -> None:
 
 def test_yaml_is_source_for_jsonl_and_agent_view_has_no_leaks(tmp_path: Path) -> None:
     from benchmarks.tier1.generate import materialize_task
+
     task = next(task for task in build_tasks() if task["kind"] == "flaky")
     task["_include_held_out"] = False
     materialize_task(task, tmp_path / "fixture")
     assert not (tmp_path / "fixture" / "tests" / "test_held_out.py").exists()
     assert not (tmp_path / "fixture" / "oracle").exists()
-    assert subprocess.run(
-        ["git", "-C", str(tmp_path / "fixture"), "rev-list", "--count", "HEAD"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip() == "1"
+    assert (
+        subprocess.run(
+            ["git", "-C", str(tmp_path / "fixture"), "rev-list", "--count", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        == "1"
+    )
     yaml_task = json.loads((ROOT / "benchmarks/manifests/tier1-01.yaml").read_text())
     jsonl_task = json.loads((ROOT / "benchmarks/tier1/tasks.jsonl").read_text().splitlines()[0])
     assert yaml_task == jsonl_task

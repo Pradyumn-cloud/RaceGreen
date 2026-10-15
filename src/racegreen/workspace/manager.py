@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .git import GitError, add_worktree, inspect_repository, remove_worktree
-from .models import AgentWorkspace, RepositoryState, RunLayout
+from .models import AgentWorkspace, RunLayout
 
 
 class UnsafeWorkspaceError(RuntimeError):
@@ -23,8 +23,13 @@ class WorkspaceManager:
         self.repository = inspect_repository(repository)
         default_root = Path.home() / ".racegreen" / "runs"
         self.artifacts_root = (artifacts_root or default_root).expanduser().resolve()
-        if self.artifacts_root == self.repository.root or self.repository.root in self.artifacts_root.parents:
-            raise UnsafeWorkspaceError("Run artifacts must not be stored inside the source repository")
+        if (
+            self.artifacts_root == self.repository.root
+            or self.repository.root in self.artifacts_root.parents
+        ):
+            raise UnsafeWorkspaceError(
+                "Run artifacts must not be stored inside the source repository"
+            )
 
     def create_run(self, *, allow_dirty: bool = False) -> RunLayout:
         if self.repository.is_dirty and not allow_dirty:
@@ -90,7 +95,7 @@ class WorkspaceManager:
             "run_id": layout.run_id,
             "repository": str(layout.base.root),
             "base_commit": layout.base.head,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "workspaces": [
                 {
                     "agent_id": item.agent_id,
@@ -108,9 +113,13 @@ class WorkspaceManager:
     def _validate_layout(self, layout: RunLayout) -> None:
         run_root = layout.root.resolve()
         if run_root.parent != self.artifacts_root or not (run_root / "ownership.json").is_file():
-            raise UnsafeWorkspaceError(f"Refusing operation outside an owned run directory: {run_root}")
+            raise UnsafeWorkspaceError(
+                f"Refusing operation outside an owned run directory: {run_root}"
+            )
         if layout.worktrees.resolve().parent != run_root:
-            raise UnsafeWorkspaceError(f"Worktree directory escapes the owned run directory: {layout.worktrees}")
+            raise UnsafeWorkspaceError(
+                f"Worktree directory escapes the owned run directory: {layout.worktrees}"
+            )
 
     def _read_workspaces(self, layout: RunLayout) -> tuple[AgentWorkspace, ...]:
         return self._decode_workspaces(

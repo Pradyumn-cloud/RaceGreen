@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import subprocess
-import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -13,44 +13,83 @@ ROOT = Path(__file__).parent
 # The first 12 deliberately cover the requested repair strata. Remaining tasks
 # provide repetitions across the same small set of independent bug shapes.
 REPAIR_SPECS = [
-    ("easy", "arithmetic"), ("easy", "collections"), ("easy", "parsing"),
-    ("easy", "state"), ("easy", "format"),
-    ("medium", "arithmetic"), ("medium", "collections"), ("medium", "parsing"),
-    ("medium", "state"), ("hard", "broad"), ("hard", "algorithm"),
-    ("medium", "flaky"), ("medium", "unrelated"), ("medium", "broad"),
-] + [("easy", "arithmetic"), ("easy", "collections"), ("medium", "parsing"),
-     ("medium", "state"), ("hard", "algorithm"), ("easy", "format"),
-     ("medium", "collections"), ("easy", "arithmetic"), ("medium", "parsing"),
-     ("easy", "state")]
+    ("easy", "arithmetic"),
+    ("easy", "collections"),
+    ("easy", "parsing"),
+    ("easy", "state"),
+    ("easy", "format"),
+    ("medium", "arithmetic"),
+    ("medium", "collections"),
+    ("medium", "parsing"),
+    ("medium", "state"),
+    ("hard", "broad"),
+    ("hard", "algorithm"),
+    ("medium", "flaky"),
+    ("medium", "unrelated"),
+    ("medium", "broad"),
+] + [
+    ("easy", "arithmetic"),
+    ("easy", "collections"),
+    ("medium", "parsing"),
+    ("medium", "state"),
+    ("hard", "algorithm"),
+    ("easy", "format"),
+    ("medium", "collections"),
+    ("easy", "arithmetic"),
+    ("medium", "parsing"),
+    ("easy", "state"),
+]
 CONTROL_SPECS = (
-    ("unsolvable", "hard"), ("weak-visible", "easy"), ("already-passing", "easy"),
-    ("tempting-test-edit", "medium"), ("control-baseline", "easy"), ("control-baseline", "easy"),
+    ("unsolvable", "hard"),
+    ("weak-visible", "easy"),
+    ("already-passing", "easy"),
+    ("tempting-test-edit", "medium"),
+    ("control-baseline", "easy"),
+    ("control-baseline", "easy"),
 )
 
 
 def _record(task_id: str, difficulty: str, kind: str, control: bool = False) -> dict[str, object]:
     return {
-        "schema_version": 1, "task_id": task_id, "suite": "tier1",
-        "category": kind, "difficulty": difficulty, "kind": kind,
+        "schema_version": 1,
+        "task_id": task_id,
+        "suite": "tier1",
+        "category": kind,
+        "difficulty": difficulty,
+        "kind": kind,
         "stratum": kind if kind in {"flaky", "unrelated", "broad"} else difficulty,
-        "known_flaky": kind == "flaky", "control": control,
-        "split": "dev" if (int(task_id.rsplit("-", 1)[-1]) if task_id.split("-")[-1].isdigit() else 1) <= 18 else "test",
-        "decoy_patches": ([f"decoys/{task_id}-visible.patch"] if kind == "weak-visible" else
-                          [f"decoys/{task_id}-test-edit.patch"] if kind == "tempting-test-edit" else []),
+        "known_flaky": kind == "flaky",
+        "control": control,
+        "split": "dev"
+        if (int(task_id.rsplit("-", 1)[-1]) if task_id.split("-")[-1].isdigit() else 1) <= 18
+        else "test",
+        "decoy_patches": (
+            [f"decoys/{task_id}-visible.patch"]
+            if kind == "weak-visible"
+            else [f"decoys/{task_id}-test-edit.patch"]
+            if kind == "tempting-test-edit"
+            else []
+        ),
         "prompt": f"{'Control' if control else 'Fix'} the {kind} synthetic task {task_id}.",
         "repository": {"kind": "synthetic", "path": f"benchmarks/tier1/fixture/{task_id}"},
-        "commands": {"visible": ["python", "-m", "pytest", "-q", "tests/test_visible.py"],
-                     "full": ["python", "-m", "pytest", "-q"],
-                     "held_out": ["python", "-m", "pytest", "-q", "tests/test_held_out.py"]},
+        "commands": {
+            "visible": ["python", "-m", "pytest", "-q", "tests/test_visible.py"],
+            "full": ["python", "-m", "pytest", "-q"],
+            "held_out": ["python", "-m", "pytest", "-q", "tests/test_held_out.py"],
+        },
         "oracle": {"patch": f"oracle/{task_id}.patch"},
     }
 
 
 def build_tasks() -> list[dict[str, object]]:
-    tasks = [_record(f"tier1-{i:02d}", difficulty, kind)
-             for i, (difficulty, kind) in enumerate(REPAIR_SPECS, 1)]
-    tasks += [_record(f"tier1-control-{i:02d}", difficulty, kind, True)
-              for i, (kind, difficulty) in enumerate(CONTROL_SPECS, 1)]
+    tasks = [
+        _record(f"tier1-{i:02d}", difficulty, kind)
+        for i, (difficulty, kind) in enumerate(REPAIR_SPECS, 1)
+    ]
+    tasks += [
+        _record(f"tier1-control-{i:02d}", difficulty, kind, True)
+        for i, (kind, difficulty) in enumerate(CONTROL_SPECS, 1)
+    ]
     frozen_hash = task_list_hash(tasks)
     for task in tasks:
         task["task_list_hash"] = frozen_hash
@@ -61,8 +100,9 @@ def write_manifest(destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     manifests = sorted((ROOT.parent / "manifests").glob("*.yaml"))
     records = [json.loads(p.read_text(encoding="utf-8")) for p in manifests]
-    destination.write_text("\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n",
-                           encoding="utf-8")
+    destination.write_text(
+        "\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n", encoding="utf-8"
+    )
 
 
 def write_task_manifests(destination: Path) -> None:
@@ -80,12 +120,14 @@ def _source(task: dict[str, object], fixed: bool) -> str:
     elif kind in {"arithmetic", "collections", "parsing", "state", "format"}:
         value = "7" if fixed else "0"
     elif kind == "broad":
-        return "def answer() -> int:\n    return 7\n" if fixed else "def answer() -> int:\n    return 0\n"
+        return (
+            "def answer() -> int:\n    return 7\n"
+            if fixed
+            else "def answer() -> int:\n    return 0\n"
+        )
     elif kind == "algorithm":
         value = "sum([1, 2, 4])" if fixed else "0"
-    elif kind == "unsolvable":
-        value = "0"
-    elif kind == "weak-visible":
+    elif kind == "unsolvable" or kind == "weak-visible":
         value = "0"
     elif kind == "tempting-test-edit":
         value = "0" if not fixed else "7"
@@ -116,6 +158,9 @@ def materialize_task(task: dict[str, object], destination: Path) -> None:
     destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
     (destination / ".racegreen-owned").write_text("tier1\n", encoding="utf-8")
+    (destination / ".gitignore").write_text(
+        "__pycache__/\n.pytest_cache/\n*.py[cod]\n", encoding="utf-8"
+    )
     (destination / "bug.py").write_text(_source(task, False), encoding="utf-8")
     tests = destination / "tests"
     tests.mkdir(exist_ok=True)
@@ -130,9 +175,22 @@ def materialize_task(task: dict[str, object], destination: Path) -> None:
         )
     subprocess.run(["git", "init", str(destination)], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(destination), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(destination), "-c", "user.name=RaceGreen",
-                    "-c", "user.email=racegreen@example.invalid", "commit", "-m", "synthetic base"],
-                   check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(destination),
+            "-c",
+            "user.name=RaceGreen",
+            "-c",
+            "user.email=racegreen@example.invalid",
+            "commit",
+            "-m",
+            "synthetic base",
+        ],
+        check=True,
+        capture_output=True,
+    )
 
 
 def task_list_hash(tasks: list[dict[str, object]] | None = None) -> str:
@@ -155,13 +213,33 @@ def write_oracles() -> None:
             before_visible, _ = _tests(task)
             if task["kind"] == "weak-visible":
                 after_visible = before_visible.replace("answer() == 0", "answer() == 7")
+                before_source = _source(task, False)
+                after_source = before_source.replace("return 0", "return 7", 1)
+                text = "".join(
+                    difflib.unified_diff(
+                        before_source.splitlines(keepends=True),
+                        after_source.splitlines(keepends=True),
+                        fromfile="a/bug.py",
+                        tofile="b/bug.py",
+                    )
+                ) + "".join(
+                    difflib.unified_diff(
+                        before_visible.splitlines(keepends=True),
+                        after_visible.splitlines(keepends=True),
+                        fromfile="a/tests/test_visible.py",
+                        tofile="b/tests/test_visible.py",
+                    )
+                )
             else:
                 after_visible = before_visible.replace("answer() == 7", "answer() == 0")
-            text = "".join(difflib.unified_diff(
-                before_visible.splitlines(keepends=True),
-                after_visible.splitlines(keepends=True),
-                fromfile="a/tests/test_visible.py", tofile="b/tests/test_visible.py",
-            ))
+                text = "".join(
+                    difflib.unified_diff(
+                        before_visible.splitlines(keepends=True),
+                        after_visible.splitlines(keepends=True),
+                        fromfile="a/tests/test_visible.py",
+                        tofile="b/tests/test_visible.py",
+                    )
+                )
             decoy_path.write_text(text, encoding="utf-8")
 
 
