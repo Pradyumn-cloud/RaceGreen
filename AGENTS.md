@@ -130,6 +130,10 @@ Define supported repository types, agent protocol, verifier policy, threat model
 
 **Exit gate:** benchmark fixtures, measurable baseline, and written threat model exist; unsupported claims are excluded.
 
+The initial toolchain is Python 3.12, `uv`, `ruff`, `mypy`, `pytest`, `asyncio`, SQLite, and Typer. RaceGreen owns its tool loop and initially uses one OpenAI-compatible provider. Benchmark comparisons must include sequential, racing, and best-of-N wait-for-all modes. Because full-suite confirmation is on the critical path, selected tests cannot be presented as a time reduction for that path; report full-suite runs avoided as a primary optimization metric. Each task must include held-out tests that agents do not see; a false winner is a candidate that passes the visible full suite but fails the held-out tests.
+
+Run state and candidate state are separate finite-state machines. A run may be `PREPARING`, `RUNNING`, `EXHAUSTED`, `CANCELLED`, or `FAILED`; each candidate independently transitions through `RECEIVED`, `PREFILTERING`, `SELECTED_TESTS`, `CONFIRMING`, `WON`, or `REJECTED`. Candidate transitions must not be encoded as transitions of the run FSM.
+
 ### Phase 1 — Safe workspace lifecycle
 
 Implement repo inspection, base-state capture, worktree creation, unique run/agent IDs, scoped artifact paths, cleanup, and interruption recovery.
