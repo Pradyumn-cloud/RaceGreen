@@ -23,9 +23,8 @@ MANIFEST
 venv/
 env/
 ENV/
-.python-version
 
-# uv / pip tooling (keep uv.lock and pyproject.toml tracked)
+# uv / pip tooling (keep uv.lock, .python-version, and pyproject.toml tracked)
 .uv/
 uv.toml.local
 pip-log.txt
@@ -61,6 +60,9 @@ junit*.xml
 .racegreen/
 logs/
 *.log
+
+# Benchmark clones, worktrees, caches, and run artifacts
+.bench/
 
 # Local secrets and environment overrides (never commit credentials)
 .env
