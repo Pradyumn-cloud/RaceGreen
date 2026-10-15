@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://racegreen.dev/schemas/benchmark-manifest-v1.json",
+  "title": "RaceGreen benchmark task",
+  "type": "object",
+  "required": ["schema_version", "task_id", "suite", "prompt", "repository", "commands", "oracle", "difficulty", "kind", "known_flaky"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$"},
+    "suite": {"type": "string", "const": "tier1"},
+    "category": {"type": "string"},
+    "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"]},
+    "kind": {"type": "string", "minLength": 1},
+    "known_flaky": {"type": "boolean"},
+    "control": {"type": "boolean"},
+    "prompt": {"type": "string", "minLength": 1},
+    "repository": {
+      "type": "object",
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["synthetic", "external"]},
+        "path": {"type": "string", "minLength": 1},
+        "url": {"type": "string"},
+        "commit": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "commands": {
+      "type": "object",
+      "required": ["visible", "full", "held_out"],
+      "properties": {
+        "visible": {"$ref": "#/$defs/argv"},
+        "full": {"$ref": "#/$defs/argv"},
+        "held_out": {"$ref": "#/$defs/argv"}
+      },
+      "additionalProperties": false
+    },
+    "oracle": {
+      "type": "object",
+      "required": ["patch"],
+      "properties": {
+        "patch": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "additionalProperties": false
+}
