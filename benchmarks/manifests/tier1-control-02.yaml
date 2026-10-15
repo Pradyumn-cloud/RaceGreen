@@ -1,0 +1,46 @@
+{
+  "category": "weak-visible",
+  "commands": {
+    "full": [
+      "python",
+      "-m",
+      "pytest",
+      "-q"
+    ],
+    "held_out": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_held_out.py"
+    ],
+    "visible": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_visible.py"
+    ]
+  },
+  "control": true,
+  "decoy_patches": [
+    "decoys/tier1-control-02-visible.patch"
+  ],
+  "difficulty": "easy",
+  "kind": "weak-visible",
+  "known_flaky": false,
+  "oracle": {
+    "patch": "oracle/tier1-control-02.patch"
+  },
+  "prompt": "Control the weak-visible synthetic task tier1-control-02.",
+  "repository": {
+    "kind": "synthetic",
+    "path": "benchmarks/tier1/fixture/tier1-control-02"
+  },
+  "schema_version": 1,
+  "split": "dev",
+  "stratum": "easy",
+  "suite": "tier1",
+  "task_id": "tier1-control-02",
+  "task_list_hash": "156e0970c721fb7809cb7ab05c64c3d670814b52b15670ed46c4c960d5ea6524"
+}
