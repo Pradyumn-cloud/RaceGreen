@@ -1,0 +1,44 @@
+{
+  "category": "collections",
+  "commands": {
+    "full": [
+      "python",
+      "-m",
+      "pytest",
+      "-q"
+    ],
+    "held_out": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_held_out.py"
+    ],
+    "visible": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_visible.py"
+    ]
+  },
+  "control": false,
+  "decoy_patches": [],
+  "difficulty": "easy",
+  "kind": "collections",
+  "known_flaky": false,
+  "oracle": {
+    "patch": "oracle/tier1-16.patch"
+  },
+  "prompt": "Fix the collections synthetic task tier1-16.",
+  "repository": {
+    "kind": "synthetic",
+    "path": "benchmarks/tier1/fixture/tier1-16"
+  },
+  "schema_version": 1,
+  "split": "dev",
+  "stratum": "easy",
+  "suite": "tier1",
+  "task_id": "tier1-16",
+  "task_list_hash": "156e0970c721fb7809cb7ab05c64c3d670814b52b15670ed46c4c960d5ea6524"
+}
