@@ -55,7 +55,7 @@ class OpenAICompatibleProvider:
             self.endpoint,
             data=body,
             headers={
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": "Bearer " + api_key,
                 "Content-Type": "application/json",
             },
             method="POST",
