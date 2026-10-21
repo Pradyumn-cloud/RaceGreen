@@ -7,6 +7,9 @@ dependencies = [
     "typer>=0.12,<1",
 ]
 
+[project.scripts]
+racegreen = "racegreen.cli:app"
+
 [dependency-groups]
 dev = [
     "mypy>=1.11,<2",

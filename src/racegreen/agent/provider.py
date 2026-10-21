@@ -36,7 +36,10 @@ class OpenAICompatibleProvider:
             raise ValueError("provider endpoint must be an absolute HTTP(S) URL")
         if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("remote provider endpoints must use HTTPS")
-        self.endpoint = endpoint.rstrip("/") + "/v1/chat/completions"
+        self.endpoint = endpoint.rstrip("/")
+        if not self.endpoint.endswith("/v1"):
+            self.endpoint += "/v1"
+        self.endpoint += "/chat/completions"
         self.model = model
         self.api_key_env = api_key_env
         self.timeout_seconds = timeout_seconds
@@ -45,7 +48,9 @@ class OpenAICompatibleProvider:
         api_key = os.environ.get(self.api_key_env)
         if not api_key:
             raise ProviderError(f"provider credential is missing: {self.api_key_env}")
-        body = json.dumps({"model": self.model, "messages": list(messages)}).encode()
+        body = json.dumps(
+            {"model": self.model, "messages": list(messages), "tools": _tool_definitions()}
+        ).encode()
         request = Request(
             self.endpoint,
             data=body,
@@ -79,3 +84,75 @@ class OpenAICompatibleProvider:
             )
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise ProviderError("provider returned an invalid response") from exc
+
+
+def _tool_definitions() -> list[dict[str, object]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "read",
+                "description": "Read a UTF-8 text file in the assigned worktree.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": "Search text in the assigned worktree.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string"},
+                    },
+                    "required": ["pattern"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "edit",
+                "description": "Replace a UTF-8 text file in the assigned worktree.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "command",
+                "description": "Run a bounded command using an argument array.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "argv": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["argv"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "submit_candidate",
+                "description": "Submit the current worktree as an immutable candidate patch.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"candidate_id": {"type": "string"}},
+                },
+            },
+        },
+    ]
