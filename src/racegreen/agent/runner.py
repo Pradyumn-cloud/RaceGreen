@@ -5,8 +5,9 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from queue import Queue
 
-from .candidate import CandidateSnapshot, snapshot_candidate
+from .candidate import CandidateSnapshot, snapshot_candidate, verify_candidate_snapshot
 from .events import EventStore
 from .models import AgentContext, AgentStatus, ProviderResponse
 from .provider import Provider, ProviderError
@@ -39,6 +40,7 @@ class AgentRunner:
             Path(context.worktree),
             timeout_seconds=context.limits.tool_timeout_seconds,
             max_output_bytes=context.limits.max_tool_output_bytes,
+            cancel_event=self._cancelled,
         )
         started = time.monotonic()
         self.events.append(
@@ -53,7 +55,14 @@ class AgentRunner:
                     return self._finish(context, AgentStatus.CANCELLED)
                 if time.monotonic() - started >= context.limits.timeout_seconds:
                     return self._finish(context, AgentStatus.TIMED_OUT)
-                response = self.provider.complete(messages)
+                response = self._complete(messages)
+                if response is None:
+                    self.events.append(
+                        "late_response_rejected",
+                        run_id=context.run_id,
+                        agent_id=context.agent_id,
+                    )
+                    return self._finish(context, AgentStatus.CANCELLED)
                 self._record_response(context, response)
                 if not response.tool_calls:
                     return self._finish(context, AgentStatus.COMPLETED)
@@ -93,6 +102,25 @@ class AgentRunner:
             )
             return self._finish(context, AgentStatus.PROVIDER_FAILED)
 
+    def _complete(self, messages: list[dict[str, str]]) -> ProviderResponse | None:
+        result: Queue[tuple[ProviderResponse | None, BaseException | None]] = Queue(maxsize=1)
+
+        def call_provider() -> None:
+            try:
+                result.put((self.provider.complete(messages), None))
+            except (ProviderError, OSError, RuntimeError, ValueError) as exc:
+                result.put((None, exc))
+
+        thread = threading.Thread(target=call_provider, daemon=True)
+        thread.start()
+        while thread.is_alive():
+            if self._cancelled.wait(0.05):
+                return None
+        response, error = result.get()
+        if error is not None:
+            raise error
+        return response
+
     def _submit(
         self, context: AgentContext, arguments: dict[str, object], *, base_commit: str, candidate_dir: Path
     ) -> CandidateSnapshot:
@@ -100,12 +128,14 @@ class AgentRunner:
         changed = self._changed_paths(Path(context.worktree), base_commit)
         if any(path == "tests" or path.startswith("tests/") for path in changed):
             raise ToolError("candidate modifies tests")
-        return snapshot_candidate(
+        candidate = snapshot_candidate(
             Path(context.worktree),
             candidate_dir / f"{candidate_id}.patch",
             candidate_id=candidate_id,
             base_commit=base_commit,
         )
+        verify_candidate_snapshot(Path(context.worktree), candidate)
+        return candidate
 
     @staticmethod
     def _changed_paths(worktree: Path, base_commit: str) -> tuple[str, ...]:

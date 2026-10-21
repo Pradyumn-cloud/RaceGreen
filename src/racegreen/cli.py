@@ -13,6 +13,7 @@ from .agent.runner import AgentRunner
 from .workspace.manager import WorkspaceManager
 
 app = typer.Typer(no_args_is_help=True)
+replay_app = typer.Typer(no_args_is_help=True)
 
 
 @app.command("agent-run")
@@ -69,3 +70,10 @@ def agent_run(
             sort_keys=True,
         )
     )
+
+
+@replay_app.command("show")
+def replay_events(path: Path = typer.Argument(..., exists=True, dir_okay=False)) -> None:  # noqa: B008
+    """Replay persisted agent events as JSON."""
+    for event in EventStore(path).replay():
+        typer.echo(json.dumps(event, sort_keys=True))

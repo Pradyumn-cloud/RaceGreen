@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from racegreen.agent.events import EventStore
@@ -14,6 +16,12 @@ class ScriptedProvider:
 
     def complete(self, messages: list[dict[str, str]]) -> ProviderResponse:
         return next(self.responses)
+
+
+class DelayedProvider:
+    def complete(self, messages: list[dict[str, str]]) -> ProviderResponse:
+        time.sleep(0.2)
+        return ProviderResponse(content="late")
 
 
 def _repo(tmp_path: Path) -> tuple[Path, str]:
@@ -95,3 +103,25 @@ def test_agent_rejects_test_changes(tmp_path: Path) -> None:
         candidate_dir=tmp_path / "candidates",
     )
     assert status == AgentStatus.PROVIDER_FAILED
+
+
+def test_cancellation_rejects_late_provider_response(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    events = EventStore(tmp_path / "events.jsonl")
+    runner = AgentRunner(DelayedProvider(), events)
+    status_holder: list[AgentStatus] = []
+    thread = threading.Thread(
+        target=lambda: status_holder.append(
+            runner.run(
+                AgentContext("run-1", "agent-1", str(repo), "Fix app"),
+                base_commit=base,
+                candidate_dir=tmp_path / "candidates",
+            )
+        )
+    )
+    thread.start()
+    time.sleep(0.05)
+    runner.cancel()
+    thread.join(timeout=1)
+    assert status_holder == [AgentStatus.CANCELLED]
+    assert any(event["event"] == "late_response_rejected" for event in events.replay())

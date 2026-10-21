@@ -45,6 +45,12 @@ patches under the run artifact directory. A submitted candidate is only a
 patch snapshot; this phase does not declare a winner or apply changes to the
 source branch.
 
+Replay persisted events without contacting the provider:
+
+```bash
+uv run racegreen-replay show C:\path\to\events.jsonl
+```
+
 The supported tool set is read, search, edit, bounded argument-array command
 execution, and candidate submission. Tool paths are resolved inside the
 assigned worktree, output is bounded, and test-file modifications are

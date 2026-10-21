@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,10 +21,18 @@ def _inside(root: Path, relative: str) -> Path:
 
 
 class WorkspaceTools:
-    def __init__(self, root: Path, *, timeout_seconds: float, max_output_bytes: int) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        timeout_seconds: float,
+        max_output_bytes: int,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
         self.root = root.resolve(strict=True)
         self.timeout_seconds = timeout_seconds
         self.max_output_bytes = max_output_bytes
+        self.cancel_event = cancel_event or threading.Event()
 
     def read(self, path: str) -> str:
         target = _inside(self.root, path)
@@ -52,18 +64,44 @@ class WorkspaceTools:
     def command(self, argv: list[str]) -> str:
         if not argv or not all(isinstance(item, str) and item for item in argv):
             raise ToolError("command must be a non-empty argument array")
-        result = subprocess.run(
-            argv,
-            cwd=self.root,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_seconds,
-        )
-        output = (result.stdout + result.stderr)[-self.max_output_bytes :]
-        if result.returncode != 0:
-            raise ToolError(f"command exited {result.returncode}: {output}")
-        return output
+        kwargs: dict[str, Any] = {
+            "cwd": self.root,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+        }
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+        process = subprocess.Popen(argv, **kwargs)
+        output = [""]
+
+        def drain_output() -> None:
+            stream = process.stdout
+            if stream is None:
+                return
+            for chunk in iter(lambda: stream.read(4096), ""):
+                output[0] = (output[0] + chunk)[-self.max_output_bytes :]
+
+        reader = threading.Thread(target=drain_output, daemon=True)
+        reader.start()
+        started = time.monotonic()
+        while process.poll() is None:
+            if self.cancel_event.is_set():
+                _terminate_process(process)
+                raise ToolError("command cancelled")
+            if time.monotonic() - started >= self.timeout_seconds:
+                _terminate_process(process)
+                raise ToolError("command timed out")
+            time.sleep(0.05)
+        reader.join(timeout=2)
+        if process.returncode is None:
+            raise ToolError("command ended without an exit status")
+        if process.returncode != 0:
+            raise ToolError(f"command exited {process.returncode}: {output[0]}")
+        return output[0]
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
         if name == "read":
@@ -78,3 +116,15 @@ class WorkspaceTools:
                 raise ToolError("command argv must be an array")
             return self.command(argv)
         raise ToolError(f"unknown tool: {name}")
+
+
+def _terminate_process(process: subprocess.Popen[str]) -> None:
+    if os.name == "nt":
+        process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+    else:
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2)

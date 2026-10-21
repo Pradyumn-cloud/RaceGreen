@@ -9,6 +9,7 @@ dependencies = [
 
 [project.scripts]
 racegreen = "racegreen.cli:app"
+racegreen-replay = "racegreen.cli:replay_app"
 
 [dependency-groups]
 dev = [
