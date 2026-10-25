@@ -7,6 +7,10 @@ dependencies = [
     "typer>=0.12,<1",
 ]
 
+[project.scripts]
+racegreen = "racegreen.cli:app"
+racegreen-replay = "racegreen.cli:replay_app"
+
 [dependency-groups]
 dev = [
     "mypy>=1.11,<2",
@@ -25,7 +29,7 @@ mypy_path = "src"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [build-system]
 requires = ["hatchling>=1.25,<2"]

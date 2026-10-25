@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .models import RepositoryState
+
+if TYPE_CHECKING:
+    from .models import AgentWorkspace
 
 
 class GitError(RuntimeError):
@@ -41,14 +46,10 @@ def inspect_repository(path: Path) -> RepositoryState:
     branch_name = _run_git(root, "branch", "--show-current").strip()
     status = _run_git(root, "status", "--porcelain=v1", "-z")
     dirty_paths = tuple(
-        entry[3:] if len(entry) >= 3 else entry
-        for entry in status.split("\0")
-        if entry
+        entry[3:] if len(entry) >= 3 else entry for entry in status.split("\0") if entry
     )
     submodules = tuple(line for line in _run_git(root, "submodule", "status").splitlines() if line)
     git_version = _run_git(root, "--version").strip()
-    from datetime import datetime, timezone
-
     return RepositoryState(
         root=root,
         head=head,
@@ -56,7 +57,7 @@ def inspect_repository(path: Path) -> RepositoryState:
         dirty_paths=dirty_paths,
         submodules=submodules,
         git_version=git_version,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
     )
 
 

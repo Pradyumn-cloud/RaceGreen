@@ -61,6 +61,10 @@ junit*.xml
 logs/
 *.log
 
+# Local run output created during development
+run-artifacts/
+artifacts/
+
 # Benchmark clones, worktrees, caches, and run artifacts
 .bench/
 

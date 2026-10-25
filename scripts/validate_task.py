@@ -11,8 +11,9 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import yaml
 
@@ -68,8 +69,8 @@ def environment_fingerprint() -> str:
 
 def _oracle_path(relative: object) -> Path:
     if not isinstance(relative, str):
-        raise ValueError("oracle patch must be a relative path")
-    patch = (PROJECT_ROOT / relative).resolve()
+        raise TypeError("oracle patch must be a relative path")
+    patch = (PROJECT_ROOT / "benchmarks" / "tier1" / relative).resolve()
     if PROJECT_ROOT not in patch.parents:
         raise ValueError("oracle patch escapes the repository")
     return patch
@@ -97,32 +98,48 @@ def _assert_no_leakage(repo: Path) -> None:
         raise RuntimeError("agent fixture leaks oracle or decoy patches")
     history = subprocess.run(
         ["git", "-C", str(repo), "rev-list", "--count", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     if history.stdout.strip() != "1":
         raise RuntimeError("agent fixture contains fix history")
 
 
-def _validate_decoys(task: dict[str, Any], repo: Path, visible: list[str],
-                     held_out: list[str], root: Path) -> dict[str, Any]:
+def _validate_decoys(
+    task: dict[str, Any], repo: Path, visible: list[str], held_out: list[str], root: Path
+) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     for index, relative in enumerate(task.get("decoy_patches", [])):
         patch = (PROJECT_ROOT / "benchmarks" / "tier1" / relative).resolve()
         target = root / f"decoy-{task['task_id']}-{index}"
-        subprocess.run(["git", "clone", "--no-hardlinks", str(repo), str(target)],
-                       check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "clone", "--no-hardlinks", str(repo), str(target)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         try:
-            applied = subprocess.run(
-                ["git", "-C", str(target), "apply", str(patch)],
-                check=False, capture_output=True, text=True,
-            ).returncode == 0
+            applied = (
+                subprocess.run(
+                    ["git", "-C", str(target), "apply", str(patch)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                ).returncode
+                == 0
+            )
             visible_passed = applied and _run(visible, target)[0]
             held_out_passed = applied and _run(held_out, target)[0]
-            results.append({
-                "patch": relative, "applied": applied,
-                "visible_passed": visible_passed, "held_out_passed": held_out_passed,
-                "valid": applied and visible_passed and not held_out_passed,
-            })
+            results.append(
+                {
+                    "patch": relative,
+                    "applied": applied,
+                    "visible_passed": visible_passed,
+                    "held_out_passed": held_out_passed,
+                    "valid": applied and visible_passed and not held_out_passed,
+                }
+            )
         finally:
             if target.exists():
                 _owned_remove(target, root)
@@ -163,6 +180,7 @@ def validate(task: dict[str, Any], repo: Path) -> dict[str, Any]:
     oracle_signature: tuple[str, ...] = ()
     oracle_full_timeout = False
     oracle_held_out_timeout = False
+    oracle_apply_error = ""
     mutation_killed = False
     mutation_status = "not-run"
     decoy_data = {"decoy_count": 0, "decoy_valid": True, "decoys": []}
@@ -184,51 +202,60 @@ def validate(task: dict[str, Any], repo: Path) -> dict[str, Any]:
             oracle_full, _, oracle_output, oracle_full_timeout = _run(full, isolated)
             oracle_held_out, _, _, oracle_held_out_timeout = _run(held_out, isolated)
             oracle_signature = _failure_signature(oracle_output)
+            baseline_failures = set().union(*baseline_signatures)
             same_base_failure = (
                 not all(baseline)
                 and bool(oracle_signature)
-                and all(signature == oracle_signature for signature in baseline_signatures)
+                and set(oracle_signature).issubset(baseline_failures)
             )
             oracle_passed = oracle_held_out and (oracle_full or same_base_failure)
-            bug = isolated / "bug.py"
-            if bug.is_file():
-                original = bug.read_text(encoding="utf-8")
-                if "return 7" in original:
-                    bug.write_text(original.replace("return 7", "return 8", 1), encoding="utf-8")
-                    mutation_killed = not _run(visible, isolated)[0]
-                    mutation_status = "killed" if mutation_killed else "survived"
-                    bug.write_text(original, encoding="utf-8")
         else:
             check = subprocess.run(
-                ["git", "-C", str(isolated), "apply", "--check", str(patch)], check=False
+                ["git", "-C", str(isolated), "apply", "--check", str(patch)],
+                check=False,
+                capture_output=True,
+                text=True,
             )
+            oracle_apply_error = check.stderr.strip()
             if check.returncode == 0:
-                applied = subprocess.run(["git", "-C", str(isolated), "apply", str(patch)], check=False)
+                applied = subprocess.run(
+                    ["git", "-C", str(isolated), "apply", str(patch)], check=False
+                )
                 if applied.returncode == 0:
                     oracle_full, _, oracle_output, oracle_full_timeout = _run(full, isolated)
                     oracle_held_out, _, _, oracle_held_out_timeout = _run(held_out, isolated)
                     oracle_signature = _failure_signature(oracle_output)
+                    baseline_failures = set().union(*baseline_signatures)
                     same_base_failure = (
                         not all(baseline)
                         and bool(oracle_signature)
-                        and all(signature == oracle_signature for signature in baseline_signatures)
+                        and set(oracle_signature).issubset(baseline_failures)
                     )
                     oracle_passed = oracle_held_out and (oracle_full or same_base_failure)
+    bug = isolated / "bug.py"
+    if oracle_passed and bug.is_file():
+        original = bug.read_text(encoding="utf-8")
+        if "return 7" in original:
+            bug.write_text(original.replace("return 7", "return 8", 1), encoding="utf-8")
+            mutation_killed = not _run(held_out, isolated)[0]
+            mutation_status = "killed" if mutation_killed else "survived"
+            bug.write_text(original, encoding="utf-8")
     _owned_remove(isolated, validation_root)
     return {
         "event": "task_result",
         "task_id": task["task_id"],
+        "stratum": task.get("stratum", "unknown"),
         "environment_fingerprint": environment_fingerprint(),
         "pristine": True,
         "baseline_runs": baseline,
         "flaky": flaky,
         "known_flaky": bool(task.get("known_flaky", False)),
-        "flaky_classification": "known" if task.get("known_flaky", False) else (
-            "observed" if flaky else "none"
-        ),
-        "failure_semantics": "F2P" if not all(baseline) and oracle_passed else (
-            "P2P" if all(baseline) and oracle_passed else "rejected"
-        ),
+        "flaky_classification": "known"
+        if task.get("known_flaky", False)
+        else ("observed" if flaky else "none"),
+        "failure_semantics": "F2P"
+        if not all(baseline) and oracle_passed
+        else ("P2P" if all(baseline) and oracle_passed else "rejected"),
         "timeout": any(baseline_timeouts)
         or visible_timeout
         or held_out_timeout
@@ -237,10 +264,9 @@ def validate(task: dict[str, Any], repo: Path) -> dict[str, Any]:
         "visible_baseline_passed": visible_passed,
         "held_out_baseline_passed": held_out_baseline,
         "oracle_passed": oracle_passed,
+        "oracle_apply_error": oracle_apply_error,
         "held_out_discriminated": (
-            not bool(task.get("control", False))
-            and not held_out_baseline
-            and oracle_passed
+            not bool(task.get("control", False)) and not held_out_baseline and oracle_passed
         ),
         "duration_seconds": duration,
         "control": bool(task.get("control", False)),
@@ -257,16 +283,14 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path(".bench/results.jsonl"))
     args = parser.parse_args()
     manifest_paths = (
-        sorted(args.manifest.glob("*.yaml"))
-        if args.manifest.is_dir()
-        else [args.manifest]
+        sorted(args.manifest.glob("*.yaml")) if args.manifest.is_dir() else [args.manifest]
     )
     tasks: list[dict[str, Any]] = []
     for manifest_path in manifest_paths:
         with manifest_path.open(encoding="utf-8-sig") as stream:
             task = yaml.safe_load(stream)
         if not isinstance(task, dict):
-            raise ValueError(f"Manifest must contain a mapping: {manifest_path}")
+            raise TypeError(f"Manifest must contain a mapping: {manifest_path}")
         tasks.append(task)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("a", encoding="utf-8") as output:
@@ -277,7 +301,9 @@ def main() -> int:
                     sys.path.insert(0, str(PROJECT_ROOT))
                     from benchmarks.tier1.generate import materialize_task
 
-                    generated = (PROJECT_ROOT / ".bench" / "fixtures" / str(task["task_id"])).resolve()
+                    generated = (
+                        PROJECT_ROOT / ".bench" / "fixtures" / str(task["task_id"])
+                    ).resolve()
                     generated.parent.mkdir(parents=True, exist_ok=True)
                     if generated.exists():
                         _owned_remove(generated, generated.parent)
@@ -295,8 +321,18 @@ def main() -> int:
                 else:
                     task_repo = args.repo.resolve()
                 result = validate(task, task_repo)
-            except (KeyError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
-                result = {"event": "task_result", "task_id": task.get("task_id"), "error": str(error)}
+            except (
+                KeyError,
+                OSError,
+                RuntimeError,
+                ValueError,
+                subprocess.SubprocessError,
+            ) as error:
+                result = {
+                    "event": "task_result",
+                    "task_id": task.get("task_id"),
+                    "error": str(error),
+                }
             finally:
                 fixture_root = PROJECT_ROOT / ".bench" / "fixtures"
                 for path in reversed(generated_paths):
