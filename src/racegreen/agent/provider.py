@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from collections.abc import Sequence
 from typing import Protocol
 from urllib.error import HTTPError, URLError
@@ -16,7 +17,7 @@ class ProviderError(RuntimeError):
 
 
 class Provider(Protocol):
-    def complete(self, messages: Sequence[dict[str, str]]) -> ProviderResponse:
+    def complete(self, messages: Sequence[dict[str, str]], cancel_event: threading.Event | None = None) -> ProviderResponse:
         """Return one bounded model response."""
 
 
@@ -44,7 +45,9 @@ class OpenAICompatibleProvider:
         self.api_key_env = api_key_env
         self.timeout_seconds = timeout_seconds
 
-    def complete(self, messages: Sequence[dict[str, str]]) -> ProviderResponse:
+    def complete(self, messages: Sequence[dict[str, str]], cancel_event: threading.Event | None = None) -> ProviderResponse:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProviderError("cancelled")
         api_key = os.environ.get(self.api_key_env)
         if not api_key:
             raise ProviderError(f"provider credential is missing: {self.api_key_env}")
@@ -61,9 +64,15 @@ class OpenAICompatibleProvider:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            # Use short timeouts with cancel checks
+            timeout = min(self.timeout_seconds, 10.0)
+            with urlopen(request, timeout=timeout) as response:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ProviderError("cancelled")
                 payload = json.loads(response.read())
         except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderError("cancelled")
             raise ProviderError("provider request failed") from exc
         try:
             message = payload["choices"][0]["message"]
@@ -83,6 +92,8 @@ class OpenAICompatibleProvider:
                 finish_reason=payload["choices"][0].get("finish_reason"),
             )
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProviderError("cancelled")
             raise ProviderError("provider returned an invalid response") from exc
 
 
