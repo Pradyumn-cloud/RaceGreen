@@ -26,13 +26,16 @@ class AgentRunner:
         self._cancelled.set()
 
     def run(self, context: AgentContext, *, base_commit: str, candidate_dir: Path) -> AgentStatus:
-        self.events.append(
+        result = self.events.append_atomic(
             "agent_started",
             run_id=context.run_id,
             agent_id=context.agent_id,
+            late_check=True,
             worktree=context.worktree,
             base_commit=base_commit,
         )
+        if result is None:
+            return AgentStatus.CANCELLED
         messages: list[dict[str, str]] = [
             {"role": "user", "content": context.task_prompt},
         ]
@@ -43,12 +46,15 @@ class AgentRunner:
             cancel_event=self._cancelled,
         )
         started = time.monotonic()
-        self.events.append(
+        res = self.events.append_atomic(
             "agent_status",
             run_id=context.run_id,
             agent_id=context.agent_id,
+            late_check=True,
             status=AgentStatus.WORKING,
         )
+        if res is None:
+            return self._finish(context, AgentStatus.CANCELLED)
         try:
             for _ in range(context.limits.max_tool_calls):
                 if self._cancelled.is_set():
@@ -57,24 +63,28 @@ class AgentRunner:
                     return self._finish(context, AgentStatus.TIMED_OUT)
                 response = self._complete(messages)
                 if response is None:
-                    self.events.append(
+                    self.events.append_atomic(
                         "late_response_rejected",
                         run_id=context.run_id,
                         agent_id=context.agent_id,
+                        late_check=True,
                     )
                     return self._finish(context, AgentStatus.CANCELLED)
                 self._record_response(context, response)
                 if not response.tool_calls:
                     return self._finish(context, AgentStatus.COMPLETED)
                 for call in response.tool_calls:
+                    if self._cancelled.is_set():
+                        return self._finish(context, AgentStatus.CANCELLED)
                     if call.name == "submit_candidate":
                         candidate = self._submit(
                             context, call.arguments, base_commit=base_commit, candidate_dir=candidate_dir
                         )
-                        self.events.append(
+                        self.events.append_atomic(
                             "candidate_submitted",
                             run_id=context.run_id,
                             agent_id=context.agent_id,
+                            late_check=True,
                             candidate_id=candidate.candidate_id,
                             patch_hash=candidate.patch_hash,
                             patch_path=str(candidate.patch_path),
@@ -85,19 +95,21 @@ class AgentRunner:
                     except ToolError as exc:
                         output = f"tool error: {exc}"
                     messages.append({"role": "tool", "content": output})
-                    self.events.append(
+                    self.events.append_atomic(
                         "tool_completed",
                         run_id=context.run_id,
                         agent_id=context.agent_id,
+                        late_check=True,
                         tool=call.name,
                         output=output,
                     )
             return self._finish(context, AgentStatus.TIMED_OUT)
         except (ProviderError, ToolError, OSError, RuntimeError) as exc:
-            self.events.append(
+            self.events.append_atomic(
                 "agent_failed",
                 run_id=context.run_id,
                 agent_id=context.agent_id,
+                late_check=True,
                 error=str(exc),
             )
             return self._finish(context, AgentStatus.PROVIDER_FAILED)
@@ -107,7 +119,12 @@ class AgentRunner:
 
         def call_provider() -> None:
             try:
-                result.put((self.provider.complete(messages), None))
+                # pass cancel event if supported
+                try:
+                    resp = self.provider.complete(messages, cancel_event=self._cancelled)  # type: ignore
+                except TypeError:
+                    resp = self.provider.complete(messages)
+                result.put((resp, None))
             except (ProviderError, OSError, RuntimeError, ValueError) as exc:
                 result.put((None, exc))
 
@@ -150,10 +167,11 @@ class AgentRunner:
         return tuple(line for line in result.stdout.splitlines() if line)
 
     def _record_response(self, context: AgentContext, response: ProviderResponse) -> None:
-        self.events.append(
+        self.events.append_atomic(
             "provider_response",
             run_id=context.run_id,
             agent_id=context.agent_id,
+            late_check=True,
             content=response.content,
             tool_calls=[call.name for call in response.tool_calls],
             input_tokens=response.input_tokens,
@@ -162,10 +180,11 @@ class AgentRunner:
         )
 
     def _finish(self, context: AgentContext, status: AgentStatus) -> AgentStatus:
-        self.events.append(
+        self.events.append_atomic(
             "agent_finished",
             run_id=context.run_id,
             agent_id=context.agent_id,
+            late_check=True,
             status=status,
         )
         return status

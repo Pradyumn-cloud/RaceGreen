@@ -17,8 +17,6 @@ class UnsafeWorkspaceError(RuntimeError):
 
 
 class WorkspaceManager:
-    """Owns resources created for a single RaceGreen run."""
-
     def __init__(self, repository: Path, artifacts_root: Path | None = None) -> None:
         self.repository = inspect_repository(repository)
         default_root = Path.home() / ".racegreen" / "runs"
@@ -60,6 +58,15 @@ class WorkspaceManager:
         current = self._read_workspaces(layout)
         self._write_manifest(layout, (*current, workspace))
         return workspace
+
+    def cleanup_agent_workspace(self, layout: RunLayout, workspace: AgentWorkspace) -> None:
+        try:
+            remove_worktree(self.repository.root, workspace)
+        except GitError:
+            pass
+        # update manifest
+        current = [w for w in self._read_workspaces(layout) if w.agent_id != workspace.agent_id]
+        self._write_manifest(layout, tuple(current))
 
     def recover_run(self, run_root: Path) -> tuple[AgentWorkspace, ...]:
         """Read ownership metadata after interruption without guessing what is safe to delete."""
