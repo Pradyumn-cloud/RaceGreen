@@ -17,6 +17,7 @@ from ..agent.events import EventStore
 from ..agent.models import AgentContext, AgentStatus
 from ..agent.provider import OpenAICompatibleProvider, Provider
 from ..agent.runner import AgentRunner
+from ..verification.intake import CandidateIntake
 from ..workspace.manager import WorkspaceManager
 from .budgets import BudgetExceeded, BudgetTracker, RunBudgets
 from .cancellation import CancellationCoordinator, ProcessRecord
@@ -56,6 +57,7 @@ class RaceScheduler:
         self._benchmark_timestamps: dict[str, float] = {}
         self._late_rejections = 0
         self._events: EventStore | None = None
+        self.intake = CandidateIntake()
 
     @property
     def run_id(self) -> str:
@@ -100,11 +102,13 @@ class RaceScheduler:
         events = None
         workspaces = []
         try:
+            os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
             self._record_bench("run_start")
             layout = self.manager.create_run()
             self._record_bench("workspace_ready")
             events = EventStore(layout.artifacts / "run_events.jsonl")
             self._events = events
+            self.intake.events = events
             self._set_state(RunState.RUNNING)
             try:
                 events.append_atomic(
@@ -117,7 +121,6 @@ class RaceScheduler:
                 )
             except Exception as e:
                 raise RuntimeError(f"event store failure: {e}") from e
-            # All-or-nothing setup
             for i in range(self.agents_count):
                 agent_id = f"agent-{i + 1}"
                 try:
@@ -131,7 +134,6 @@ class RaceScheduler:
                         except Exception:
                             pass
                     raise
-            # Supervisor with explicit tasks
             results = []
             with ThreadPoolExecutor(max_workers=self.max_concurrency) as executor:
                 futs = []
@@ -189,7 +191,11 @@ class RaceScheduler:
 
     def _run_agent(self, layout, workspace, events: EventStore) -> dict[str, Any]:
         agent_id = workspace.agent_id
-        if self.cancellation.is_cancelled:
+        if self.cancellation.is_cancelled or events.is_terminal():
+            try:
+                events.append_atomic("event.rejected_late", run_id=self._run_id, agent_id=agent_id, late_check=False)
+            except Exception:
+                pass
             return {"agent_id": agent_id, "status": AgentStatus.CANCELLED.value}
         self._record_bench(f"{agent_id}_started")
         self._candidate_counts[agent_id] = 0
@@ -206,7 +212,7 @@ class RaceScheduler:
                     api_key_env=config.api_key_env,
                     timeout_seconds=config.timeout_seconds,
                 )
-            runner = AgentRunner(provider, events)
+            runner = AgentRunner(provider, events, intake=self.intake, is_terminal=events.is_terminal())
             if self.cancellation.is_cancelled:
                 runner.cancel()
             context = AgentContext(

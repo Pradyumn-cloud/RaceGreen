@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 import time
@@ -7,6 +8,7 @@ import uuid
 from pathlib import Path
 from queue import Queue
 
+from ..verification.intake import CandidateIntake
 from .candidate import CandidateSnapshot, snapshot_candidate, verify_candidate_snapshot
 from .events import EventStore
 from .models import AgentContext, AgentStatus, ProviderResponse
@@ -17,10 +19,14 @@ from .tools import ToolError, WorkspaceTools
 class AgentRunner:
     """Runs one provider conversation inside one assigned worktree."""
 
-    def __init__(self, provider: Provider, events: EventStore) -> None:
+    def __init__(self, provider: Provider, events: EventStore, intake: CandidateIntake | None = None, is_terminal: bool = False) -> None:
         self.provider = provider
         self.events = events
+        self.intake = intake or CandidateIntake(events=events)
+        self.is_terminal = is_terminal
         self._cancelled = threading.Event()
+        # Set env for agent
+        os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -77,17 +83,33 @@ class AgentRunner:
                     if self._cancelled.is_set():
                         return self._finish(context, AgentStatus.CANCELLED)
                     if call.name == "submit_candidate":
-                        candidate = self._submit(
-                            context, call.arguments, base_commit=base_commit, candidate_dir=candidate_dir
+                        # wait for child processes to exit (best effort)
+                        time.sleep(0.1)
+                        intake_res = self.intake.freeze_and_intake(
+                            Path(context.worktree),
+                            candidate_dir,
+                            str(call.arguments.get("candidate_id") or uuid.uuid4().hex),
+                            base_commit,
+                            context.run_id,
+                            context.agent_id,
+                            is_terminal=self.events.is_terminal() or self.is_terminal,
                         )
+                        if not intake_res.accepted or intake_res.snapshot is None:
+                            self.events.append_atomic(
+                                "candidate_rejected",
+                                run_id=context.run_id,
+                                agent_id=context.agent_id,
+                                late_check=True,
+                            )
+                            return self._finish(context, AgentStatus.PROVIDER_FAILED)
                         self.events.append_atomic(
                             "candidate_submitted",
                             run_id=context.run_id,
                             agent_id=context.agent_id,
                             late_check=True,
-                            candidate_id=candidate.candidate_id,
-                            patch_hash=candidate.patch_hash,
-                            patch_path=str(candidate.patch_path),
+                            candidate_id=intake_res.snapshot.candidate_id,
+                            patch_hash=intake_res.snapshot.patch_hash,
+                            patch_path=str(intake_res.snapshot.patch_path),
                         )
                         return self._finish(context, AgentStatus.SUBMITTED)
                     try:
@@ -119,7 +141,6 @@ class AgentRunner:
 
         def call_provider() -> None:
             try:
-                # pass cancel event if supported
                 try:
                     resp = self.provider.complete(messages, cancel_event=self._cancelled)  # type: ignore
                 except TypeError:
