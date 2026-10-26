@@ -5,8 +5,8 @@ from __future__ import annotations
 import ast
 import os
 import re
-from dataclasses import dataclass, field
-from pathlib import Path
+import time
+from dataclasses import dataclass
 
 from .gitutil import apply_check, numstat, summary
 from .syntax import check_python_syntax
@@ -72,8 +72,6 @@ class PreFilter:
         self.config = config or PreFilterConfig()
 
     def filter(self, patch_bytes: bytes, patch_hash: str, candidate_id: str, worktree: Path | None = None, base_commit: str | None = None) -> PreFilterResult:
-        import time
-
         start = time.monotonic()
         rejections: list[PreFilterRejection] = []
         soft_triggered = False
@@ -90,7 +88,6 @@ class PreFilter:
 
         if len(patch_bytes) > self.config.max_patch_bytes_soft or self._count_files(patch_bytes) > self.config.max_files_soft:
             soft_triggered = True
-            # do not reject by default
 
         ok_apply, err_apply = apply_check(patch_bytes)
         if not ok_apply:
@@ -99,29 +96,22 @@ class PreFilter:
         nst = numstat(patch_bytes)
         summ = summary(patch_bytes)
         changed = self._extract_paths(nst)
-        # mode checks
         if "120000" in summ or "mode 120000" in summ:
             rejections.append(PreFilterRejection("symlink_detected", summ[:200], patch_hash, candidate_id))
         if "160000" in summ or "mode 160000" in summ:
             rejections.append(PreFilterRejection("submodule_detected", summ[:200], patch_hash, candidate_id))
-        # binary
         if b"\x00" in patch_bytes and not self.config.allow_binaries:
-            # git apply --numstat shows - - for binary; be conservative
             if re.search(r"^- -\s+", nst, re.M):
                 rejections.append(PreFilterRejection("binary_artifact", "binary file change detected", patch_hash, candidate_id))
-        # test/config tampering
         for p in changed:
             name = os.path.basename(p)
             if name in TEST_CONFIG_FILES:
                 rejections.append(PreFilterRejection("test_config_tamper", f"edit to {p}", patch_hash, candidate_id))
                 break
-            if p.endswith("pyproject.toml"):
-                # basic check - look for pytest section changes (best effort)
-                pass
             if name in {".gitattributes", ".gitmodules"}:
                 rejections.append(PreFilterRejection("vcs_metadata_change", f"edit to {p}", patch_hash, candidate_id))
                 break
-        # python syntax base-aware
+
         if worktree is not None and base_commit is not None:
             syn = check_python_syntax(patch_bytes, worktree, base_commit, self.config.target_python_version, self.config.syntax_check_max_bytes)
             if not syn.ok and syn.error:
@@ -148,7 +138,10 @@ class PreFilter:
                 continue
             parts = line.split("\t")
             if len(parts) >= 3:
-                paths.append(parts[2])
+                p = parts[2]
+                if p == "-":
+                    continue
+                paths.append(p)
             elif len(parts) == 2:
                 paths.append(parts[1])
         return tuple(paths)

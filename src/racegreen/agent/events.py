@@ -88,7 +88,7 @@ class EventStore:
 
     def append(self, event: str, *, run_id: str, agent_id: str, **data: Any) -> dict[str, Any]:
         result = self.append_atomic(event, run_id=run_id, agent_id=agent_id, late_check=False, **data)
-        if result is None:  # should not happen if late_check False
+        if result is None:
             raise RuntimeError(f"Event append failed: {event}")
         return result
 
