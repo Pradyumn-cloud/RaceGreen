@@ -13,6 +13,7 @@ class RunState(StrEnum):
     COMPLETED = "completed"
     EXHAUSTED = "exhausted"
     FAILED = "failed"
+    UNVERIFIABLE = "unverifiable"
 
 
 class CandidateState(StrEnum):
@@ -22,6 +23,7 @@ class CandidateState(StrEnum):
     SELECTED_TESTS = "selected_tests"
     CONFIRMING = "confirming"
     WON = "won"
+    CONFIRMED_BUT_NOT_SELECTED = "confirmed_but_not_selected"
     REJECTED = "rejected"
     CANCELLED = "cancelled"
     INFRA_FAILED = "infra_failed"
@@ -29,28 +31,24 @@ class CandidateState(StrEnum):
 
 _RUN_TRANSITIONS: dict[RunState, set[RunState]] = {
     RunState.PREPARING: {RunState.RUNNING, RunState.CANCELLED, RunState.FAILED},
-    RunState.RUNNING: {
-        RunState.CANCELLING,
-        RunState.COMPLETED,
-        RunState.EXHAUSTED,
-        RunState.CANCELLED,
-        RunState.FAILED,
-    },
-    RunState.CANCELLING: {RunState.CANCELLED, RunState.COMPLETED, RunState.FAILED, RunState.EXHAUSTED},
+    RunState.RUNNING: {RunState.CANCELLING, RunState.COMPLETED, RunState.EXHAUSTED, RunState.CANCELLED, RunState.FAILED, RunState.UNVERIFIABLE},
+    RunState.CANCELLING: {RunState.CANCELLED, RunState.COMPLETED, RunState.FAILED, RunState.EXHAUSTED, RunState.UNVERIFIABLE},
     RunState.CANCELLED: set(),
     RunState.COMPLETED: set(),
     RunState.EXHAUSTED: set(),
     RunState.FAILED: set(),
+    RunState.UNVERIFIABLE: set(),
 }
 
 
-_CANDIDATE_TRANSITIONS_PHASE4: dict[CandidateState, set[CandidateState]] = {
+_CANDIDATE_TRANSITIONS_PHASE5: dict[CandidateState, set[CandidateState]] = {
     CandidateState.RECEIVED: {CandidateState.PREFILTERING, CandidateState.CANCELLED, CandidateState.INFRA_FAILED, CandidateState.REJECTED},
     CandidateState.PREFILTERING: {CandidateState.PREFILTER_PASSED, CandidateState.CANCELLED, CandidateState.INFRA_FAILED, CandidateState.REJECTED},
-    CandidateState.PREFILTER_PASSED: {CandidateState.SELECTED_TESTS, CandidateState.CANCELLED, CandidateState.INFRA_FAILED, CandidateState.REJECTED},
+    CandidateState.PREFILTER_PASSED: {CandidateState.SELECTED_TESTS, CandidateState.CONFIRMING, CandidateState.CANCELLED, CandidateState.INFRA_FAILED, CandidateState.REJECTED},
     CandidateState.SELECTED_TESTS: {CandidateState.CONFIRMING, CandidateState.CANCELLED, CandidateState.INFRA_FAILED, CandidateState.REJECTED},
-    CandidateState.CONFIRMING: {CandidateState.WON, CandidateState.REJECTED, CandidateState.CANCELLED, CandidateState.INFRA_FAILED},
+    CandidateState.CONFIRMING: {CandidateState.WON, CandidateState.CONFIRMED_BUT_NOT_SELECTED, CandidateState.REJECTED, CandidateState.CANCELLED, CandidateState.INFRA_FAILED},
     CandidateState.WON: set(),
+    CandidateState.CONFIRMED_BUT_NOT_SELECTED: set(),
     CandidateState.REJECTED: set(),
     CandidateState.CANCELLED: set(),
     CandidateState.INFRA_FAILED: set(),
@@ -67,7 +65,7 @@ def validate_run_transition(current: RunState, nxt: RunState) -> None:
 
 
 def validate_candidate_transition(current: CandidateState, nxt: CandidateState) -> None:
-    if nxt not in _CANDIDATE_TRANSITIONS_PHASE4.get(current, set()):
+    if nxt not in _CANDIDATE_TRANSITIONS_PHASE5.get(current, set()):
         raise InvalidStateTransition(f"invalid candidate transition {current} -> {nxt}")
 
 
