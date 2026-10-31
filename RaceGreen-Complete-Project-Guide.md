@@ -288,22 +288,36 @@ Integration should check that the destination branch still matches the expected 
 
 **Exit gate:** only a full-suite pass can produce `WON`; cancellation and integration preserve user state.
 
-## 14. Phase 7 — SQLite trace and live view
+## 14. Phase 7 — SQLite trace, benchmark harness, and safe reporting
 
-First make the CLI useful without a UI. Add commands to list runs, inspect agents, inspect candidates, show test outcomes, export patches, and replay event timelines.
+SQLite is the authoritative trace store. Events are append-only; agent and
+candidate tables are projections updated in the same transaction. The database
+uses WAL mode, a busy timeout, per-run sequences allocated inside
+`BEGIN IMMEDIATE`, bounded payloads, and atomic winner/event persistence.
+JSONL is a derived export, not a second runtime source of truth.
 
-Then add a small local web interface:
+First make the CLI useful without a UI. Provide commands to ingest and verify
+traces, list runs, inspect snapshots, list events, export event JSONL, and
+write a self-contained HTML report. Strip terminal control sequences before
+printing untrusted agent or test output, and authorize artifacts against their
+owned run directory.
 
-- Bind to loopback only by default.
-- Stream persisted events over SSE; reconnect by event ID or sequence number.
-- Display run/agent state, candidate diffs, verifier stages, cost, and cancellation status.
-- Escape all untrusted text and treat Markdown/HTML from agents as inert text.
-- Authorize every artifact path against the run directory.
-- Recover UI state from the SQLite event stream after reload.
+Next add the benchmark harness. It must run the single-attempt,
+sequential-retry, parallel-wait-all, RaceGreen, and ablation arms in
+interleaved order across tasks and repeats. Record environment/configuration
+fingerprints, verification outcomes, cost, cancellation, full-suite runs
+avoided, resolved status, false winners, and failures in SQLite. Analysis must
+read this store.
 
-Do not make the browser the source of truth; SQLite events and artifacts remain authoritative.
+An optional live web interface may follow the static report. If added, it must
+bind to loopback only, validate Host and Origin, require a random session
+token, send restrictive security headers, serve artifacts as plain-text
+downloads, and replay persisted events per-client without making the browser
+authoritative.
 
-**Exit gate:** disconnecting or refreshing the UI does not lose run state, and the service cannot be reached from external network interfaces by default.
+**Exit gate:** SQLite verification passes, trace projections can be checked
+against events, CLI/report output is safe, benchmark records are reproducible,
+and no UI or report loses state or exposes artifacts outside its run directory.
 
 ## 15. Phase 8 — Hardening and release
 
