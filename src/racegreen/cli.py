@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import signal
+import sys
 from pathlib import Path
 
 import typer
@@ -240,3 +243,122 @@ def report(
 ) -> None:
     """Write a self-contained HTML report from SQLite."""
     typer.echo(str(write_report(_db(database), run_id, output)))
+
+
+@app.command("demo")
+def demo(
+    artifacts_root: Path = typer.Option(
+        Path(".racegreen-demo"), "--artifacts-root"
+    ),  # noqa: B008
+) -> None:
+    """Run an offline trace/report demo without credentials or network access."""
+    root = artifacts_root.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    database = root / "demo.db"
+    run_id = "demo-run"
+    db = _db(database)
+    events = (
+        ("run_configured", "scheduler", {"base_commit": "demo-base", "model": "recorded-demo"}),
+        ("agent_started", "agent-1", {"status": "working"}),
+        ("candidate_frozen", "agent-1", {"candidate_id": "candidate-1", "patch_hash": "demo-hash"}),
+        ("verification_finished", "verifier", {
+            "candidate_id": "candidate-1",
+            "stage": "full_suite",
+            "status": "passed",
+        }),
+        ("run_finished", "scheduler", {"status": "completed"}),
+    )
+    for event, agent_id, data in events:
+        db.append_event(
+            {
+                "event": event,
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "timestamp": "2026-01-01T00:00:00Z",
+                **data,
+            }
+        )
+    output = root / "report.html"
+    write_report(db, run_id, output)
+    typer.echo(json.dumps({"database": str(database), "report": str(output), "run_id": run_id}))
+
+
+@app.command("doctor")
+def doctor() -> None:
+    """Check local prerequisites without contacting a provider."""
+    checks = {
+        "python_312": sys.version_info[:2] == (3, 12),
+        "git": shutil.which("git") is not None,
+        "provider_configured": bool(
+            os.environ.get("RACEGREEN_API_KEY")
+            and os.environ.get("RACEGREEN_MODEL")
+        ),
+        "provider_url_configured": bool(os.environ.get("RACEGREEN_PROVIDER_URL")),
+        "home_writable": os.access(Path.home(), os.W_OK),
+    }
+    typer.echo(json.dumps({"checks": checks, "ok": all(checks.values())}, sort_keys=True))
+    if not checks["python_312"] or not checks["git"] or not checks["home_writable"]:
+        raise typer.Exit(code=1)
+
+
+@app.command("init")
+def init(
+    config: Path = typer.Option(
+        Path.home() / ".config" / "racegreen" / "config.json", "--config"
+    ),  # noqa: B008
+) -> None:
+    """Create a safe local configuration without embedding credentials."""
+    destination = config.expanduser().resolve()
+    if destination.exists():
+        raise typer.BadParameter(f"configuration already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(
+            {
+                "provider_url": "https://api.openai.com",
+                "model": "set-via-environment",
+                "artifacts_root": str(Path.home() / ".racegreen" / "runs"),
+                "network_policy": "provider-only",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    try:
+        destination.chmod(0o600)
+    except OSError:
+        pass
+    typer.echo(str(destination))
+
+
+@app.command("clean")
+def clean(
+    run_id: str | None = typer.Option(None, "--run-id"),
+    artifacts_root: Path = typer.Option(
+        Path.home() / ".racegreen" / "runs", "--artifacts-root"
+    ),  # noqa: B008
+    confirm: bool = typer.Option(False, "--yes"),
+) -> None:
+    """List or remove only explicitly-owned RaceGreen run directories."""
+    root = artifacts_root.expanduser().resolve()
+    if not root.is_dir():
+        typer.echo(json.dumps({"runs": [], "removed": []}))
+        return
+    candidates = [root / run_id] if run_id else sorted(root.iterdir())
+    owned: list[Path] = []
+    for candidate in candidates:
+        if (
+            candidate.parent == root
+            and candidate.is_dir()
+            and (candidate / "ownership.json").is_file()
+        ):
+            owned.append(candidate)
+    if not confirm:
+        typer.echo(json.dumps({"runs": [path.name for path in owned], "removed": []}))
+        return
+    removed: list[str] = []
+    for candidate in owned:
+        shutil.rmtree(candidate)
+        removed.append(candidate.name)
+    typer.echo(json.dumps({"runs": [path.name for path in owned], "removed": removed}))

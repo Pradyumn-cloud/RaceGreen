@@ -52,6 +52,20 @@ are reviewed. Analysis includes deterministic bootstrap confidence intervals,
 per-stratum rates, cost per resolved task, regret against the fastest resolved
 task, and a solved-by-time curve.
 
+## Phase 8 benchmark sequence
+
+Run a pilot on the development split before hardening:
+
+```bash
+uv run python scripts/benchmark_budget.py --arms 8 --tasks 18 --repeats 1
+```
+
+Use the estimate to reserve provider capacity before launching the pilot. The
+final run must record the provider, exact model ID, run date, protocol version,
+task-list hash, response-recording policy, latency, failures, and cost. Freeze
+the code and protocol before the final test-split run; any code change after
+the freeze invalidates its results.
+
 Validator results also record a dependency-free differential mutation check:
 the oracle implementation is changed to return a wrong value and the visible
 test must kill that mutant. `mutation_status` reports `killed`, `survived`, or

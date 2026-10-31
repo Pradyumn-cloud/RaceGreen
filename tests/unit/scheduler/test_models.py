@@ -1,12 +1,13 @@
+import pytest
+
 from racegreen.scheduler.models import (
     CandidateState,
+    InvalidStateTransition,
     RunState,
     assert_candidate_phase3_safe,
     validate_candidate_transition,
     validate_run_transition,
-    InvalidStateTransition,
 )
-import pytest
 
 
 def test_run_states_include_cancelling_and_completed():

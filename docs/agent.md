@@ -70,6 +70,26 @@ The HTML report is self-contained and renders agent/model/test text as inert
 escaped text. JSONL is a derived export for compatibility and is not the
 runtime source of truth.
 
+Check local prerequisites without contacting a provider:
+
+```bash
+uv run racegreen doctor
+uv run racegreen init
+```
+
+`init` writes defaults only. Credentials must remain in protected environment
+injection or an OS credential store.
+
+List RaceGreen-owned run directories before cleanup, then explicitly confirm:
+
+```bash
+uv run racegreen clean
+uv run racegreen clean --run-id RUN_ID --yes
+```
+
+Cleanup only accepts direct run directories containing RaceGreen's ownership
+marker. It does not remove source repositories or arbitrary directories.
+
 The supported tool set is read, search, edit, bounded argument-array command
 execution, and candidate submission. Tool paths are resolved inside the
 assigned worktree, output is bounded, and test-file modifications are

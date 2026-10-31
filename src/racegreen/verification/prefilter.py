@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import ast
 import os
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from .gitutil import apply_check, numstat, summary
 from .syntax import check_python_syntax
-
 
 DEFAULT_EXCLUDES = (
     "__pycache__/",
@@ -89,7 +88,7 @@ class PreFilter:
         if len(patch_bytes) > self.config.max_patch_bytes_soft or self._count_files(patch_bytes) > self.config.max_files_soft:
             soft_triggered = True
 
-        ok_apply, err_apply = apply_check(patch_bytes)
+        ok_apply, err_apply = apply_check(patch_bytes, worktree, reverse=worktree is not None)
         if not ok_apply:
             rejections.append(PreFilterRejection("apply_check_failed", err_apply[:200], patch_hash, candidate_id))
 
@@ -101,7 +100,7 @@ class PreFilter:
         if "160000" in summ or "mode 160000" in summ:
             rejections.append(PreFilterRejection("submodule_detected", summ[:200], patch_hash, candidate_id))
         if b"\x00" in patch_bytes and not self.config.allow_binaries:
-            if re.search(r"^- -\s+", nst, re.M):
+            if re.search(r"^- -\s+", nst, flags=re.MULTILINE):
                 rejections.append(PreFilterRejection("binary_artifact", "binary file change detected", patch_hash, candidate_id))
         for p in changed:
             name = os.path.basename(p)
@@ -129,7 +128,7 @@ class PreFilter:
 
     def _count_files(self, patch_bytes: bytes) -> int:
         nst = numstat(patch_bytes)
-        return len([l for l in nst.splitlines() if l.strip()])
+        return len([line for line in nst.splitlines() if line.strip()])
 
     def _extract_paths(self, nst: str) -> tuple[str, ...]:
         paths = []

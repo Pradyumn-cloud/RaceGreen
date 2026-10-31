@@ -63,10 +63,6 @@ def snapshot_candidate(
     tmp = destination.with_suffix(destination.suffix + ".tmp")
     tmp.write_bytes(patch)
     os.replace(tmp, destination)
-    try:
-        os.chmod(destination, 0o444)
-    except Exception:
-        pass
     return CandidateSnapshot(candidate_id, destination, patch_hash, base_commit)
 
 

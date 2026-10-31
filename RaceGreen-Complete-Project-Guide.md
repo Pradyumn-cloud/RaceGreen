@@ -321,20 +321,37 @@ and no UI or report loses state or exposes artifacts outside its run directory.
 
 ## 15. Phase 8 — Hardening and release
 
-Before packaging a first release:
+Phase 8 starts with a pilot benchmark on the development split. It must run
+the configured arms and a small number of repeats before hardening, so a
+negative result is discovered before release polishing.
 
-- Review filesystem boundaries, symlink handling, process launch, network policy, secret redaction, and cancellation.
-- Confirm no path can delete outside RaceGreen-owned run directories.
-- Verify database migrations from the previous release and recovery after interrupted writes.
-- Pin dependencies and review licenses, vulnerabilities, and update process.
-- Test on a clean WSL2 environment with no GPU and with the optional GPU available.
-- Test a dirty source repo, no-network configuration, rate-limit response, flaky test, timeout, disk-full condition, cancellation, and full-suite rejection.
-- Benchmark the same tasks with sequential and racing modes at equivalent total budgets.
-- Publish median and range, success rate, cost, false-winner rate, failed runs, test-selection fallback rate, and cancellation latency.
-- Document supported OS, Python versions, provider setup, permissions, limitations, data retention, and troubleshooting.
-- Keep release artifacts reproducible and create a versioned changelog.
+After the pilot:
 
-Do not state that speed improved unless the benchmark shows it, and do not report only successful runs. A useful primary metric is **verified time-to-patch**, alongside success rate and cost per task.
+- Build a traceability matrix from requirements to implementation and tests.
+- Add only tests for uncovered requirements, including repeated full-suite
+  runs, branch coverage of critical modules, property tests for path authority
+  and FSMs, and a constrained disk-full simulation.
+- Review filesystem boundaries, process launch, network policy, secret
+  redaction, and cancellation.
+- Document that agent commands execute with user permissions; provider network
+  policy does not sandbox arbitrary commands unless an OS sandbox is enabled.
+- Add `SECURITY.md`, CI, secret scanning, dependency auditing, a license, and
+  a no-API `racegreen demo`.
+- Freeze the implementation, protocol, model ID, run date, and task-list hash
+  before the final benchmark. Any code change afterward invalidates results.
+- Run the final benchmark on the untouched test split and include failed,
+  timed-out, rate-limited, and unsolved runs.
+- Publish verified time-to-patch, solved-by-time curves, resolved rate, cost,
+  false-winner rate, regret, full-suite runs avoided, selection misses,
+  provider latency, and cancellation latency.
+- Prefer a tagged `v0.1.0` source release. PyPI, signed artifacts, Windows
+  native junction support, GPU documentation, and multi-release migration
+  history are deferred.
+
+The clean-environment definition is a fresh CI runner or fresh WSL
+distribution, not the developer's existing machine. The README quickstart
+must run in CI using demo mode. Do not claim speed improvement unless the
+benchmark demonstrates it.
 
 ## 16. Suggested first-run experience
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from racegreen.verification.prefilter import PreFilter
 from racegreen.agent.candidate import compute_patch_hash
+from racegreen.verification.prefilter import PreFilter
 
 
 def test_oracle_patches_accepted(tmp_path):

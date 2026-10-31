@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..agent.candidate import CandidateSnapshot, snapshot_candidate, verify_candidate_snapshot
 from ..agent.events import EventStore
-from .gitutil import git_env_isolated, snapshot_patch_stable
-from .prefilter import PreFilter, PreFilterConfig
+from .gitutil import snapshot_patch_stable
+from .prefilter import PreFilter, PreFilterRejection
 
 
 @dataclass
@@ -27,7 +24,7 @@ class CandidateIntake:
         self.prefilter = prefilter or PreFilter()
         self.events = events
         self._lock = threading.RLock()
-        self._seen_hashes: set[str] = {}
+        self._seen_hashes: set[str] = set()
         self._hash_attributions: dict[str, list[tuple[str, str, str]]] = {}  # hash -> [(run_id,agent_id,candidate_id)]
 
     def freeze_and_intake(
@@ -94,6 +91,22 @@ class CandidateIntake:
                 pass
 
         res = self.prefilter.filter(patch_bytes, patch_hash, candidate_id, worktree, base_commit)
+        if any(
+            path == "tests" or path.startswith("tests/")
+            for path in res.changed_paths
+        ):
+            return IntakeResult(
+                False,
+                None,
+                (
+                    PreFilterRejection(
+                        "test_file_change",
+                        "candidate modifies tests",
+                        patch_hash,
+                        candidate_id,
+                    ),
+                ),
+            )
         if self.events is not None:
             try:
                 self.events.append_atomic(

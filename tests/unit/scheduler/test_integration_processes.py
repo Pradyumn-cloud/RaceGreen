@@ -29,10 +29,10 @@ def test_process_registry_and_termination_posix(tmp_path):
     try:
         if hasattr(os, "kill"):
             os.kill(proc.pid, 0)
-        alive = proc.poll() is None
+        proc.poll()
     except ProcessLookupError:
-        alive = False
+        pass
     except Exception:
-        alive = proc.poll() is None
+        proc.poll()
     # On Windows without proper process tree kill, just verify coordination happened
     assert True  # be lenient in cross-platform test env

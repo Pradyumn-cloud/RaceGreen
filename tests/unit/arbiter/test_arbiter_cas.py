@@ -1,8 +1,7 @@
-from pathlib import Path
 
-from racegreen.storage.db import RaceDB
 from racegreen.agent.events import EventStore
 from racegreen.arbiter.arbiter import Arbiter
+from racegreen.storage.db import RaceDB
 from racegreen.verification.evidence import VerificationEvidence
 
 

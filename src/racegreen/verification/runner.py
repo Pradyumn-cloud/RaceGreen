@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import tempfile
 import time
@@ -10,7 +9,7 @@ from pathlib import Path
 
 from ..agent.events import EventStore
 from .artifacts import write_bounded
-from .baseline import BaseBaseline, build_baseline, get_baseline
+from .baseline import build_baseline, get_baseline
 from .classifier import classify
 from .config import VerificationConfig
 from .env import alloc_port, free_port, verification_env
@@ -45,7 +44,9 @@ class VerificationRunner:
         env = verification_env()
         port = alloc_port()
         try:
-            base_bl = get_baseline(repo, base_commit, self.config.full_suite_command) or build_baseline(repo, base_commit, self.config.full_suite_command, env)
+            get_baseline(repo, base_commit, self.config.full_suite_command) or build_baseline(
+                repo, base_commit, self.config.full_suite_command, env
+            )
             # apply patch in temp checkout
             with tempfile.TemporaryDirectory(prefix="racegreen-vfy-") as td:
                 checkout = Path(td) / "co"
@@ -55,8 +56,6 @@ class VerificationRunner:
                 cwd = str(checkout)
                 # selection
                 sel = self.selector.select(changed_paths)
-                # determine timeouts from base duration
-                base_dur = base_bl.summary.tests  # rough proxy not ideal; use fixed scaled
                 timeout_sel = self.config.timeout_selected_seconds or (300.0)
                 timeout_full = self.config.timeout_full_seconds or (1800.0)
                 # selected
@@ -83,7 +82,7 @@ class VerificationRunner:
                     if rc == 5:  # no tests collected
                         return {"status": "rejected", "stage": "full", "classification": "infra"}
                     if rc == 0:
-                        summ = parse_junit(junit_full)
+                        parse_junit(junit_full)
                         # base-aware check
                         # simple: if no new failures beyond base? better check cases
                         evidence = VerificationEvidence(
