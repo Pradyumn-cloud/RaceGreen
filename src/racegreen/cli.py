@@ -240,3 +240,41 @@ def report(
 ) -> None:
     """Write a self-contained HTML report from SQLite."""
     typer.echo(str(write_report(_db(database), run_id, output)))
+
+
+@app.command("demo")
+def demo(
+    artifacts_root: Path = typer.Option(
+        Path(".racegreen-demo"), "--artifacts-root"
+    ),  # noqa: B008
+) -> None:
+    """Run an offline trace/report demo without credentials or network access."""
+    root = artifacts_root.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    database = root / "demo.db"
+    run_id = "demo-run"
+    db = _db(database)
+    events = (
+        ("run_configured", "scheduler", {"base_commit": "demo-base", "model": "recorded-demo"}),
+        ("agent_started", "agent-1", {"status": "working"}),
+        ("candidate_frozen", "agent-1", {"candidate_id": "candidate-1", "patch_hash": "demo-hash"}),
+        ("verification_finished", "verifier", {
+            "candidate_id": "candidate-1",
+            "stage": "full_suite",
+            "status": "passed",
+        }),
+        ("run_finished", "scheduler", {"status": "completed"}),
+    )
+    for event, agent_id, data in events:
+        db.append_event(
+            {
+                "event": event,
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "timestamp": "2026-01-01T00:00:00Z",
+                **data,
+            }
+        )
+    output = root / "report.html"
+    write_report(db, run_id, output)
+    typer.echo(json.dumps({"database": str(database), "report": str(output), "run_id": run_id}))
