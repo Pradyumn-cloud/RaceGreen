@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import subprocess
 from pathlib import Path
 
@@ -65,7 +64,11 @@ class IntegrationManager:
         # check with merge-tree if possible
         try:
             # git merge-tree --write-tree support varies; try
-            res = subprocess.run(["git", "-C", str(repo), "merge-tree", "--write-tree", base_commit, base_commit], check=False, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "merge-tree", "--write-tree", base_commit, base_commit],
+                check=False,
+                capture_output=True,
+            )
         except Exception:
             pass
         # apply

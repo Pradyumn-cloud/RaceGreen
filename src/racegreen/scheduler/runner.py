@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import queue
-import signal
 import subprocess
 import threading
 import time
@@ -15,13 +14,13 @@ from typing import Any
 
 from ..agent.events import EventStore
 from ..agent.models import AgentContext, AgentStatus
-from ..agent.provider import OpenAICompatibleProvider, Provider
+from ..agent.provider import OpenAICompatibleProvider
 from ..agent.runner import AgentRunner
 from ..verification.intake import CandidateIntake
 from ..workspace.manager import WorkspaceManager
 from .budgets import BudgetExceeded, BudgetTracker, RunBudgets
 from .cancellation import CancellationCoordinator, ProcessRecord
-from .models import CandidateState, RunState, validate_candidate_transition, validate_run_transition
+from .models import RunState, validate_run_transition
 from .rate_limit import SharedRateLimiter
 
 

@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from racegreen.agent.events import EventStore
 

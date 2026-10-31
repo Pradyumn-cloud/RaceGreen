@@ -7,8 +7,6 @@ import os
 import socket
 import tempfile
 import threading
-from pathlib import Path
-
 
 _lock = threading.RLock()
 _port_base = 40000

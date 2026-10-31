@@ -1,7 +1,5 @@
-from pathlib import Path
 
 from racegreen.verification.prefilter import PreFilter, PreFilterConfig
-from racegreen.verification.intake import CandidateIntake
 
 
 def test_empty_rejected():

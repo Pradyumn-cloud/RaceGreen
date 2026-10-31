@@ -63,7 +63,13 @@ def snapshot_patch_stable(worktree: Path, base_commit: str, destination: Path, e
             raise RuntimeError("failed to generate diff")
         patch = diff.stdout
         # apply --check
-        chk = subprocess.run(["git", "apply", "--check", "--whitespace=nowarn"], input=patch, capture_output=True, env=env)
+        subprocess.run(
+            ["git", "apply", "--check", "--whitespace=nowarn"],
+            input=patch,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
         # write atomically
         tmp = destination.with_suffix(destination.suffix + ".tmp")
         tmp.write_bytes(patch)
@@ -72,9 +78,21 @@ def snapshot_patch_stable(worktree: Path, base_commit: str, destination: Path, e
         return patch, hashlib.sha256(patch).hexdigest()
 
 
-def apply_check(patch_bytes: bytes) -> tuple[bool, str]:
+def apply_check(
+    patch_bytes: bytes, repository: Path | None = None, *, reverse: bool = False
+) -> tuple[bool, str]:
     env = git_env_isolated()
-    res = subprocess.run(["git", "apply", "--check", "--whitespace=nowarn"], input=patch_bytes, capture_output=True, env=env)
+    command = ["git", "apply", "--check", "--whitespace=nowarn"]
+    if reverse:
+        command.append("--reverse")
+    res = subprocess.run(
+        command,
+        input=patch_bytes,
+        capture_output=True,
+        env=env,
+        cwd=str(repository) if repository is not None else None,
+        check=False,
+    )
     return res.returncode == 0, res.stderr.decode("utf-8", errors="replace")
 
 

@@ -39,7 +39,9 @@ def build_baseline(repo: Path, base_commit: str, full_suite_cmd: list[str], env:
     with tempfile.TemporaryDirectory(prefix="racegreen-base-") as td:
         junit = Path(td) / "junit.xml"
         cmd = list(full_suite_cmd) + [f"--junitxml={junit}"]
-        proc = subprocess.run(cmd, cwd=str(repo), env=env, capture_output=True, timeout=1800)
+        subprocess.run(
+            cmd, cwd=str(repo), env=env, capture_output=True, timeout=1800, check=False
+        )
         summary = parse_junit(junit) if junit.exists() else JUnitSummary()
         failing = set()
         for c in summary.cases:
