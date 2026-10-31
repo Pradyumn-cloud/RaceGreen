@@ -22,3 +22,10 @@ uv run racegreen demo
 The command writes a small SQLite trace and self-contained HTML report under
 `.racegreen-demo/`. Do not use the demo as evidence of agent quality; it only
 checks the local persistence and presentation path.
+
+## Security limitation
+
+Agent commands run with the current user's permissions. Git worktrees isolate
+version-control state but are not an OS sandbox, and agent command network
+access is not disabled by RaceGreen alone. Use a container or VM for
+untrusted repositories. See [SECURITY.md](SECURITY.md).
