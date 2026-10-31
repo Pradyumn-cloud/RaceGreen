@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import signal
+import sys
 from pathlib import Path
 
 import typer
@@ -278,3 +281,52 @@ def demo(
     output = root / "report.html"
     write_report(db, run_id, output)
     typer.echo(json.dumps({"database": str(database), "report": str(output), "run_id": run_id}))
+
+
+@app.command("doctor")
+def doctor() -> None:
+    """Check local prerequisites without contacting a provider."""
+    checks = {
+        "python_312": sys.version_info[:2] == (3, 12),
+        "git": shutil.which("git") is not None,
+        "provider_configured": bool(
+            os.environ.get("RACEGREEN_API_KEY")
+            and os.environ.get("RACEGREEN_MODEL")
+        ),
+        "provider_url_configured": bool(os.environ.get("RACEGREEN_PROVIDER_URL")),
+        "home_writable": os.access(Path.home(), os.W_OK),
+    }
+    typer.echo(json.dumps({"checks": checks, "ok": all(checks.values())}, sort_keys=True))
+    if not checks["python_312"] or not checks["git"] or not checks["home_writable"]:
+        raise typer.Exit(code=1)
+
+
+@app.command("init")
+def init(
+    config: Path = typer.Option(
+        Path.home() / ".config" / "racegreen" / "config.json", "--config"
+    ),  # noqa: B008
+) -> None:
+    """Create a safe local configuration without embedding credentials."""
+    destination = config.expanduser().resolve()
+    if destination.exists():
+        raise typer.BadParameter(f"configuration already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(
+            {
+                "provider_url": "https://api.openai.com",
+                "model": "set-via-environment",
+                "artifacts_root": str(Path.home() / ".racegreen" / "runs"),
+                "network_policy": "provider-only",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    try:
+        destination.chmod(0o600)
+    except OSError:
+        pass
+    typer.echo(str(destination))

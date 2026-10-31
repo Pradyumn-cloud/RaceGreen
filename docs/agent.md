@@ -70,6 +70,16 @@ The HTML report is self-contained and renders agent/model/test text as inert
 escaped text. JSONL is a derived export for compatibility and is not the
 runtime source of truth.
 
+Check local prerequisites without contacting a provider:
+
+```bash
+uv run racegreen doctor
+uv run racegreen init
+```
+
+`init` writes defaults only. Credentials must remain in protected environment
+injection or an OS credential store.
+
 The supported tool set is read, search, edit, bounded argument-array command
 execution, and candidate submission. Tool paths are resolved inside the
 assigned worktree, output is bounded, and test-file modifications are
