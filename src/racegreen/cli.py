@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import signal
-import sys
 from pathlib import Path
 
 import typer
@@ -12,12 +11,20 @@ from .agent.events import EventStore
 from .agent.models import AgentContext, AgentLimits
 from .agent.provider import OpenAICompatibleProvider
 from .agent.runner import AgentRunner
+from .report import write_report
 from .scheduler.budgets import RunBudgets
 from .scheduler.runner import RaceScheduler
+from .storage.db import RaceDB
+from .storage.security import safe_terminal_text
 from .workspace.manager import WorkspaceManager
 
 app = typer.Typer(no_args_is_help=True)
 replay_app = typer.Typer(no_args_is_help=True)
+db_app = typer.Typer(no_args_is_help=True)
+events_app = typer.Typer(no_args_is_help=True)
+DEFAULT_DB = Path.home() / ".racegreen" / "racegreen.db"
+app.add_typer(db_app, name="db")
+app.add_typer(events_app, name="events")
 
 
 @app.command("agent-run")
@@ -27,6 +34,7 @@ def agent_run(
     artifacts_root: Path | None = typer.Option(None, "--artifacts-root"),  # noqa: B008
     timeout_seconds: float = typer.Option(300.0, min=1.0),
     max_tool_calls: int = typer.Option(100, min=1),
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
 ) -> None:
     """Run one bounded coding agent in a private worktree."""
     config = ProviderConfig.from_environment()
@@ -62,6 +70,7 @@ def agent_run(
         base_commit=layout.base.head,
         candidate_dir=layout.artifacts / "candidates",
     )
+    _db(database).ingest_events(events.replay())
     typer.echo(
         json.dumps(
             {
@@ -86,6 +95,7 @@ def race(
     timeout_seconds: float = typer.Option(300.0, min=1.0),
     max_tokens_per_run: int | None = typer.Option(None),
     max_cost_usd_per_run: float | None = typer.Option(None),
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
 ) -> None:
     """Run bounded multi-agent race."""
     max_c = max_concurrency if max_concurrency is not None else agents
@@ -113,26 +123,32 @@ def race(
     try:
         signal.signal(signal.SIGINT, _handle_signal)
         signal.signal(signal.SIGTERM, _handle_signal)
-    except Exception:
+    except (ValueError, OSError):
         pass
 
     try:
         summary = scheduler.run()
+        event_path = (
+            (artifacts_root or Path.home() / ".racegreen" / "runs")
+            / str(summary["run_id"])
+            / "artifacts"
+            / "run_events.jsonl"
+        )
+        if event_path.is_file():
+            _db(database).ingest_events(EventStore(event_path).replay())
         state = summary.get("state")
         typer.echo(json.dumps(summary, sort_keys=True))
         if state == "completed":
             raise typer.Exit(code=0)
         elif state == "cancelled":
             raise typer.Exit(code=130)
-        elif state == "exhausted":
-            raise typer.Exit(code=1)
-        elif state == "failed":
+        elif state == "exhausted" or state == "failed":
             raise typer.Exit(code=1)
         else:
             raise typer.Exit(code=1)
     except typer.Exit:
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         typer.echo(json.dumps({"error": str(e)}, sort_keys=True), err=True)
         raise typer.Exit(code=1)
 
@@ -141,4 +157,86 @@ def race(
 def replay_events(path: Path = typer.Argument(..., exists=True, dir_okay=False)) -> None:  # noqa: B008
     """Replay persisted agent events as JSON."""
     for event in EventStore(path).replay():
-        typer.echo(json.dumps(event, sort_keys=True))
+        typer.echo(safe_terminal_text(json.dumps(event, sort_keys=True)))
+
+
+def _db(path: Path) -> RaceDB:
+    return RaceDB(path)
+
+
+@db_app.command("ingest")
+def db_ingest(
+    events_path: Path = typer.Argument(..., exists=True, dir_okay=False),  # noqa: B008
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
+) -> None:
+    """Import an existing JSONL event file into the authoritative trace database."""
+    records = EventStore(events_path).replay()
+    count = _db(database).ingest_events(records)
+    typer.echo(json.dumps({"database": str(database), "events_added": count}, sort_keys=True))
+
+
+@db_app.command("verify")
+def db_verify(
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
+) -> None:
+    """Check SQLite integrity and event sequence invariants."""
+    result = _db(database).verify()
+    typer.echo(json.dumps(result, sort_keys=True))
+    if result["violations"]:
+        raise typer.Exit(code=1)
+
+
+@events_app.command("list")
+def events_list(
+    run_id: str = typer.Argument(...),
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
+    after: int = typer.Option(0, min=0),
+    limit: int = typer.Option(100, min=1, max=10000),
+) -> None:
+    """List persisted events for a run."""
+    for event in _db(database).events(run_id, after=after, limit=limit):
+        typer.echo(safe_terminal_text(json.dumps(event, sort_keys=True)))
+
+
+@events_app.command("export")
+def events_export(
+    run_id: str = typer.Argument(...),
+    output: Path = typer.Option(Path("-"), "--output"),  # noqa: B008
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
+) -> None:
+    """Export a derived JSONL timeline from SQLite."""
+    lines = "\n".join(
+        safe_terminal_text(json.dumps(event, sort_keys=True))
+        for event in _db(database).events(run_id, limit=10000)
+    ) + "\n"
+    if str(output) == "-":
+        typer.echo(lines, nl=False)
+    else:
+        output.expanduser().resolve().write_text(lines, encoding="utf-8")
+
+
+@app.command("runs")
+def runs(
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
+) -> None:
+    """List runs recorded in SQLite."""
+    typer.echo(json.dumps(_db(database).list_runs(), sort_keys=True))
+
+
+@app.command("run-show")
+def run_show(
+    run_id: str = typer.Argument(...),
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
+) -> None:
+    """Show the persisted run snapshot."""
+    typer.echo(json.dumps(_db(database).run_snapshot(run_id), sort_keys=True))
+
+
+@app.command("report")
+def report(
+    run_id: str = typer.Argument(...),
+    output: Path = typer.Option(Path("racegreen-report.html"), "--output"),  # noqa: B008
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
+) -> None:
+    """Write a self-contained HTML report from SQLite."""
+    typer.echo(str(write_report(_db(database), run_id, output)))
