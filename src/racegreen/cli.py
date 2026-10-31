@@ -330,3 +330,35 @@ def init(
     except OSError:
         pass
     typer.echo(str(destination))
+
+
+@app.command("clean")
+def clean(
+    run_id: str | None = typer.Option(None, "--run-id"),
+    artifacts_root: Path = typer.Option(
+        Path.home() / ".racegreen" / "runs", "--artifacts-root"
+    ),  # noqa: B008
+    confirm: bool = typer.Option(False, "--yes"),
+) -> None:
+    """List or remove only explicitly-owned RaceGreen run directories."""
+    root = artifacts_root.expanduser().resolve()
+    if not root.is_dir():
+        typer.echo(json.dumps({"runs": [], "removed": []}))
+        return
+    candidates = [root / run_id] if run_id else sorted(root.iterdir())
+    owned: list[Path] = []
+    for candidate in candidates:
+        if (
+            candidate.parent == root
+            and candidate.is_dir()
+            and (candidate / "ownership.json").is_file()
+        ):
+            owned.append(candidate)
+    if not confirm:
+        typer.echo(json.dumps({"runs": [path.name for path in owned], "removed": []}))
+        return
+    removed: list[str] = []
+    for candidate in owned:
+        shutil.rmtree(candidate)
+        removed.append(candidate.name)
+    typer.echo(json.dumps({"runs": [path.name for path in owned], "removed": removed}))
