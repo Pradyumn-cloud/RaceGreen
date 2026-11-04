@@ -19,12 +19,15 @@ def safe_terminal_text(value: object, limit: int = 20_000) -> str:
 def authorize_artifact(run_root: Path, requested: Path) -> Path:
     root = run_root.expanduser().resolve(strict=True)
     candidate = requested if requested.is_absolute() else root / requested
+    current = candidate
+    while current != root and root in current.parents:
+        if current.is_symlink():
+            raise ValueError("symlink artifacts are not permitted")
+        current = current.parent
     try:
         resolved = candidate.resolve(strict=True)
     except FileNotFoundError as exc:
         raise ValueError("artifact does not exist") from exc
     if resolved != root and root not in resolved.parents:
         raise ValueError("artifact path escapes the run directory")
-    if resolved.is_symlink():
-        raise ValueError("symlink artifacts are not permitted")
     return resolved
