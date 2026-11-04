@@ -1,4 +1,4 @@
-# RaceGreen Phase 0 benchmark protocol
+# RaceGreen benchmark protocol
 
 The Tier 1 suite is synthetic and legally redistributable. It has 24 repair
 tasks and 6 controls, with no network or third-party checkout required.
@@ -43,21 +43,22 @@ acceptable.
 `scripts/analyze_results.py` summarizes fake or real JSONL data. Selected tests
 are advisory; a future winner still requires full-suite confirmation.
 
-The protocol strata are: easy (10 tasks), medium (11), hard (3), flaky (1),
-unrelated pre-existing failure (1), and broad-change (2). Tasks 1–18 are the
-development split and the remainder are held-out test tasks; every manifest
-contains the frozen task-list hash. Tier 2 external repository tasks remain
-pending until their licenses, commits, setup locks, and reproducible fixtures
-are reviewed. Analysis includes deterministic bootstrap confidence intervals,
-per-stratum rates, cost per resolved task, regret against the fastest resolved
-task, and a solved-by-time curve.
+The protocol strata are: easy, medium, hard, flaky, unrelated pre-existing
+failure, and broad-change. Tasks 1–18 are the development split and the
+remainder are held-out test tasks; every manifest contains the frozen task-list
+hash. Tier 2 external repository tasks remain pending until their licenses,
+commits, setup locks, and reproducible fixtures are reviewed. Analysis includes
+deterministic bootstrap confidence intervals, per-stratum rates, cost per
+resolved task, regret against the fastest resolved task, and a solved-by-time
+curve.
 
 ## Phase 8 benchmark sequence
 
-Run a pilot on the development split before hardening:
+Run a pilot on the development split before hardening. The development split
+contains 18 repair tasks plus six controls, so the harness emits 24 tasks:
 
 ```bash
-uv run python scripts/benchmark_budget.py --arms 8 --tasks 18 --repeats 1
+uv run python scripts/benchmark_budget.py --arms 8 --tasks 24 --repeats 1
 ```
 
 Use the estimate to reserve provider capacity before launching the pilot. The
@@ -65,6 +66,22 @@ final run must record the provider, exact model ID, run date, protocol version,
 task-list hash, response-recording policy, latency, failures, and cost. Freeze
 the code and protocol before the final test-split run; any code change after
 the freeze invalidates its results.
+
+The executable harness is `scripts/benchmark.py`. It runs the eight protocol
+arms in interleaved task/repeat order and writes one JSONL result per
+arm/task/repeat:
+
+```bash
+uv run python scripts/benchmark.py --split dev --repeats 1 \
+  --output .bench/pilot.jsonl
+uv run python scripts/analyze_results.py .bench/pilot.jsonl
+```
+
+By default the harness replays the checked-in oracle and control patches. This
+checks the benchmark pipeline, not LLM quality. A provider adapter may export
+recorded responses as JSONL with `task_id`, `arm`, and `patch` fields, then
+replay them with `--responses`. Keep response recordings private when they
+contain repository or provider data.
 
 Validator results also record a dependency-free differential mutation check:
 the oracle implementation is changed to return a wrong value and the visible

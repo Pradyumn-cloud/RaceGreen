@@ -1,4 +1,4 @@
-# Phase 2 single-agent path
+# Agent operations
 
 The single-agent command runs one provider conversation in a RaceGreen-owned
 Git worktree. The provider can be hosted or local, but the initial adapter
@@ -9,7 +9,7 @@ uses the OpenAI-compatible chat-completions protocol.
 Credentials are read only from the environment:
 
 ```bash
-export RACEGREEN_API_KEY="..."
+export RACEGREEN_API_KEY="your-key"
 export RACEGREEN_MODEL="your-model-id"
 export RACEGREEN_PROVIDER_URL="https://api.openai.com"
 ```
@@ -28,34 +28,33 @@ Run from a clean repository because workspace creation refuses dirty source
 trees by default:
 
 ```bash
-uv run racegreen C:\path\to\repository "Fix the failing test"
+uv run racegreen agent-run /path/to/repository "Fix the failing test"
 ```
 
 Optional controls:
 
 ```bash
-uv run racegreen C:\path\to\repository "Fix the failing test" \
+uv run racegreen agent-run /path/to/repository "Fix the failing test" \
   --timeout-seconds 300 \
   --max-tool-calls 100 \
-  --artifacts-root C:\path\outside\repository\runs
+  --artifacts-root /home/user/.racegreen/runs
 ```
 
 The command creates a private worktree and persists JSONL events and candidate
-patches under the run artifact directory. A submitted candidate is only a
-patch snapshot; this phase does not declare a winner or apply changes to the
-source branch.
+patches under the run artifact directory. A submitted candidate is a patch
+snapshot. RaceGreen does not apply changes to the source branch automatically.
 
 Replay persisted events without contacting the provider:
 
 ```bash
-uv run racegreen-replay show C:\path\to\events.jsonl
+uv run racegreen-replay show /path/to/events.jsonl
 ```
 
 ## Trace inspection and reports
 
 Agent and race commands import their persisted events into the local SQLite
 trace database. Keep that database on the WSL/Linux filesystem when using WAL.
-It contains redacted, bounded events and never provider credentials.
+It contains bounded events and never provider credentials.
 
 ```bash
 uv run racegreen runs
@@ -94,6 +93,16 @@ The supported tool set is read, search, edit, bounded argument-array command
 execution, and candidate submission. Tool paths are resolved inside the
 assigned worktree, output is bounded, and test-file modifications are
 rejected at candidate submission.
+
+## Multi-agent races
+
+```bash
+uv run racegreen race /path/to/repository "Fix the failing test" \
+  --agents 2 --max-concurrency 2
+```
+
+Only a full-suite-confirmed candidate can win. The default integration path
+remains reviewable and does not silently commit to the source branch.
 
 ## Local inference
 

@@ -15,6 +15,11 @@ artifacts. Run directories and databases may contain repository and model
 output, so protect them with normal filesystem permissions and clean them with
 `racegreen clean`.
 
+On WSL2, keep the SQLite database, WAL files, and run artifacts on the Linux
+filesystem (for example under `/home/<user>/.racegreen`), not under
+`/mnt/c`. This is an operational reliability requirement for SQLite WAL, not
+a security boundary.
+
 Report suspected vulnerabilities privately through the repository's configured
 security contact. Do not publish credentials, tokens, private repository data,
 or exploit details in public issues.

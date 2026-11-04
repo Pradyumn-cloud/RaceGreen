@@ -16,6 +16,10 @@ covered by a model claim; it needs an implementation and an executable check.
 | Provider error handling | `agent/provider.py` | `tests/unit/test_provider.py` |
 | No-API demonstration | `cli.py` and demo fixtures | `tests/unit/test_demo.py` |
 | Clean installation | `.github/workflows/ci.yml` | CI workflow |
+| Path authority property checks | `storage/security.py` | `tests/unit/test_release_hardening.py` |
+| SQLite sequence and winner recovery checks | `storage/db.py` | `tests/unit/test_release_hardening.py` |
+| Benchmark arm interleaving and replay metadata | `scripts/benchmark.py` | `tests/unit/test_benchmark_runner.py` |
+| Secret and dependency audit gates | `.github/workflows/ci.yml` | CI workflow |
 
 Known gaps are tracked as issues rather than hidden in this document. Agent
 command network isolation is intentionally not claimed: worktrees do not
