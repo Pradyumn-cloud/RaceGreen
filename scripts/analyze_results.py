@@ -50,7 +50,11 @@ def analyze(records: list[dict[str, Any]]) -> dict[str, Any]:
         for record in tasks
         if isinstance(record.get("duration_seconds"), (int, float))
     ]
-    winners = [record for record in tasks if record.get("winner_declared") is True]
+    winners = [
+        record
+        for record in repair_tasks
+        if record.get("winner_declared") is True
+    ]
     resolved = [record for record in winners if record.get("held_out_passed") is True]
     return {
         "task_count": len(tasks),
