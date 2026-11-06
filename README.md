@@ -31,9 +31,17 @@ Inspect persisted runs in the local dashboard:
 uv run racegreen dashboard --open
 ```
 
-The dashboard binds to loopback by default and is currently read-only. Apply
-or branch operations remain explicit CLI operations while their target-state
-and patch checks are being hardened.
+The dashboard binds to loopback by default and provides:
+
+- run search and state filters
+- KPI summary cards
+- candidate and winner evidence
+- live event timeline with automatic refresh
+- copyable CLI commands for starting a run
+- responsive desktop and mobile layouts
+
+It remains read-only. Apply or branch operations remain explicit CLI
+operations while their target-state and patch checks are being hardened.
 
 ## Offline demo
 
