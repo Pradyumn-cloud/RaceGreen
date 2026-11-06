@@ -14,9 +14,10 @@ def test_init_writes_no_credentials(tmp_path):
     assert json.loads(content)["network_policy"] == "provider-only"
 
 
-def test_doctor_reports_checks(monkeypatch):
+def test_doctor_reports_checks(tmp_path, monkeypatch):
     monkeypatch.delenv("RACEGREEN_API_KEY", raising=False)
     monkeypatch.setenv("RACEGREEN_MODEL", "test-model")
+    monkeypatch.setenv("RACEGREEN_CONFIG", str(tmp_path / "missing.json"))
     result = CliRunner().invoke(app, ["doctor"])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["checks"]["provider_configured"] is False

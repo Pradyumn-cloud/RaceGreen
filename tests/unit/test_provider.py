@@ -6,8 +6,9 @@ from racegreen.agent.config import ProviderConfig
 from racegreen.agent.provider import OpenAICompatibleProvider
 
 
-def test_provider_config_requires_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_config_requires_model(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RACEGREEN_MODEL", raising=False)
+    monkeypatch.setenv("RACEGREEN_CONFIG", str(tmp_path / "missing.json"))
     with pytest.raises(ValueError, match="model"):
         ProviderConfig.from_environment()
 
