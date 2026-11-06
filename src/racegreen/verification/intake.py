@@ -86,7 +86,15 @@ class CandidateIntake:
 
         if self.events is not None:
             try:
-                self.events.append_atomic("prefilter_started", run_id=run_id, agent_id=agent_id, late_check=True, candidate_id=candidate_id, patch_hash=patch_hash)
+                self.events.append_atomic(
+                    "prefilter_started",
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    late_check=True,
+                    candidate_id=candidate_id,
+                    patch_hash=patch_hash,
+                    patch_path=str(dest),
+                )
             except Exception:
                 pass
 
@@ -95,18 +103,28 @@ class CandidateIntake:
             path == "tests" or path.startswith("tests/")
             for path in res.changed_paths
         ):
-            return IntakeResult(
-                False,
-                None,
-                (
-                    PreFilterRejection(
-                        "test_file_change",
-                        "candidate modifies tests",
-                        patch_hash,
-                        candidate_id,
-                    ),
-                ),
+            rejection = PreFilterRejection(
+                "test_file_change",
+                "candidate modifies tests",
+                patch_hash,
+                candidate_id,
             )
+            if self.events is not None:
+                try:
+                    self.events.append_atomic(
+                        "candidate_rejected",
+                        run_id=run_id,
+                        agent_id=agent_id,
+                        late_check=True,
+                        candidate_id=candidate_id,
+                        patch_hash=patch_hash,
+                        patch_path=str(dest),
+                        rule=rejection.rule,
+                        evidence=rejection.evidence,
+                    )
+                except (OSError, RuntimeError):
+                    pass
+            return IntakeResult(False, None, (rejection,))
         if self.events is not None:
             try:
                 self.events.append_atomic(
@@ -116,6 +134,8 @@ class CandidateIntake:
                     late_check=True,
                     candidate_id=candidate_id,
                     patch_hash=patch_hash,
+                    patch_path=str(dest),
+                    changed_paths=list(res.changed_paths),
                     accepted=res.accepted,
                     duration_ms=res.duration_ms,
                     soft_limit_triggered=res.soft_limit_triggered,
@@ -134,6 +154,7 @@ class CandidateIntake:
                             late_check=True,
                             candidate_id=candidate_id,
                             patch_hash=patch_hash,
+                            patch_path=str(dest),
                             rule=r.rule,
                             evidence=r.evidence,
                         )
