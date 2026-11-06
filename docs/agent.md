@@ -130,11 +130,33 @@ Inspect persisted runs in the loopback-only dashboard:
 uv run racegreen dashboard --open
 ```
 
-The current dashboard is read-only and provides run search, state filters,
-summary metrics, candidate cards, winner evidence, and a live event timeline.
-It refreshes persisted state automatically and treats agent and test output as
-untrusted text. The `NEW RUN` dialog prepares a copyable CLI command; it does
-not execute commands from the browser.
+The dashboard is read-only and provides run search, state filters, summary
+metrics, candidate lifecycle and patch inspection, winner evidence, agent
+status, and a live event timeline. The timeline uses server-sent events,
+supports event/agent/candidate filters and follow mode, and falls back to
+polling if the browser does not support `EventSource`.
+
+Treat agent and test output as untrusted text. The dashboard escapes rendered
+values, serves only local assets under a restrictive Content Security Policy,
+rejects cross-origin requests, and never executes commands from the browser.
+The `NEW RUN` dialog only prepares a copyable CLI command.
+
+Candidate patch content is available only when the candidate's recorded patch
+path resolves inside the run directory under the dashboard's artifacts root.
+Symlink escapes and oversized patches are rejected. Pass the same artifacts
+root used when creating the run:
+
+```bash
+uv run racegreen dashboard --open \
+  --database "$HOME/.racegreen/racegreen.db" \
+  --artifacts-root "$HOME/.racegreen/runs"
+```
+
+The dashboard shows whether a winner has recorded full-suite confirmation
+evidence. It does not re-verify the decision; use the event trace and reports
+for the authoritative verification record. The server binds to loopback by
+default and permits only loopback `Host` values and same-port loopback `Origin`
+values.
 
 ## 5. Check the installation
 
@@ -280,6 +302,17 @@ Verify SQLite integrity, contiguous event sequences, and winner invariants:
 ```bash
 uv run racegreen db verify --database "$DB"
 ```
+
+Rebuild run, agent, and candidate projections by replaying the persisted event
+trace. Existing winner rows are preserved:
+
+```bash
+uv run racegreen db rebuild --database "$DB"
+```
+
+Opening an older database upgrades its schema and rebuilds projections
+automatically. Use `db rebuild` after manual event ingestion or if a projection
+looks stale. The event rows remain the authoritative trace.
 
 Import an existing JSONL event file:
 

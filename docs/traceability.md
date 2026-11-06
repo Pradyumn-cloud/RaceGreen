@@ -10,7 +10,8 @@ covered by a model claim; it needs an implementation and an executable check.
 | Full-suite winner confirmation | `verification/` and `arbiter/` | `tests/unit/verification/` |
 | Atomic winner persistence | `storage/db.py` | `tests/unit/arbiter/test_arbiter_cas.py` |
 | SQLite integrity and trace projections | `storage/db.py` | `tests/unit/storage/test_db.py` |
-| Artifact path authority | `storage/security.py` | `tests/unit/storage/test_db.py` |
+| Loopback-only read-only dashboard and live trace | `dashboard/` | `tests/unit/test_dashboard.py` |
+| Artifact path authority | `storage/security.py` | `tests/unit/storage/test_db.py` and `tests/unit/test_dashboard.py` |
 | Terminal output sanitization | `storage/security.py` | `tests/unit/storage/test_db.py` |
 | Bounded cancellation | `scheduler/cancellation.py` | `tests/unit/scheduler/test_cancellation.py` |
 | Provider error handling | `agent/provider.py` | `tests/unit/test_provider.py` |

@@ -33,15 +33,24 @@ uv run racegreen dashboard --open
 
 The dashboard binds to loopback by default and provides:
 
-- run search and state filters
-- KPI summary cards
-- candidate and winner evidence
-- live event timeline with automatic refresh
+- run search, state filters, and KPI summary cards
+- candidate lifecycle stages with patch inspection
+- winner evidence, including whether full-suite confirmation was recorded
+- a live event timeline with server-sent updates, filters, and follow mode
 - copyable CLI commands for starting a run
 - responsive desktop and mobile layouts
 
-It remains read-only. Apply or branch operations remain explicit CLI
-operations while their target-state and patch checks are being hardened.
+It remains read-only: the browser cannot start runs, apply patches, or execute
+repository commands. Candidate patches are served only when their recorded path
+is inside the configured `--artifacts-root` run directory, and the endpoint caps
+patch size at 2 MiB. Apply or branch operations remain explicit CLI operations
+while their target-state and patch checks are being hardened.
+
+Use the same artifacts root that created the runs:
+
+```bash
+uv run racegreen dashboard --artifacts-root "$HOME/.racegreen/runs"
+```
 
 ## Offline demo
 
