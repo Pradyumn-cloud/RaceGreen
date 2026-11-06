@@ -130,8 +130,11 @@ Inspect persisted runs in the loopback-only dashboard:
 uv run racegreen dashboard --open
 ```
 
-The current dashboard is read-only and shows run state, candidates, and
-verification evidence. It treats agent and test output as untrusted text.
+The current dashboard is read-only and provides run search, state filters,
+summary metrics, candidate cards, winner evidence, and a live event timeline.
+It refreshes persisted state automatically and treats agent and test output as
+untrusted text. The `NEW RUN` dialog prepares a copyable CLI command; it does
+not execute commands from the browser.
 
 ## 5. Check the installation
 
