@@ -56,10 +56,9 @@ class WorkspaceTools:
 
     def edit(self, path: str, content: str) -> str:
         target = _inside(self.root, path)
-        if not target.exists() or not target.is_file():
-            raise ToolError(f"cannot edit missing file: {path}")
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return f"edited {path}"
+        return f"wrote {path}"
 
     def command(self, argv: list[str]) -> str:
         if not argv or not all(isinstance(item, str) and item for item in argv):

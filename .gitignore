@@ -82,6 +82,13 @@ artifacts/
 *.swo
 *~
 
+# Frontend development and local dashboard output
+node_modules/
+frontend/dist/
+dashboard/dist/
+racegreen-report.html
+winner.patch
+
 # OS metadata
 .DS_Store
 .DS_Store?

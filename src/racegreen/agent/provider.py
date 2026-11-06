@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from .config import ProviderConfig
 from .models import ProviderResponse, ToolCall
 
 
@@ -31,12 +32,22 @@ class OpenAICompatibleProvider:
         model: str,
         api_key_env: str = "RACEGREEN_API_KEY",
         timeout_seconds: float = 60.0,
+        requires_api_key: bool | None = None,
     ) -> None:
         parsed = urlparse(endpoint)
         if parsed.scheme not in {"https", "http"} or not parsed.netloc:
             raise ValueError("provider endpoint must be an absolute HTTP(S) URL")
-        if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-            raise ValueError("remote provider endpoints must use HTTPS")
+        loopback = {"127.0.0.1", "localhost", "::1"}
+        allow_insecure = os.environ.get("RACEGREEN_ALLOW_INSECURE_HTTP", "").strip() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if parsed.scheme == "http" and parsed.hostname not in loopback and not allow_insecure:
+            raise ValueError(
+                "remote provider endpoints must use HTTPS; for trusted local HTTP providers "
+                "(e.g. WSL to host Ollama) set RACEGREEN_ALLOW_INSECURE_HTTP=1"
+            )
         self.endpoint = endpoint.rstrip("/")
         if not self.endpoint.endswith("/v1"):
             self.endpoint += "/v1"
@@ -44,45 +55,50 @@ class OpenAICompatibleProvider:
         self.model = model
         self.api_key_env = api_key_env
         self.timeout_seconds = timeout_seconds
+        self.requires_api_key = (
+            requires_api_key
+            if requires_api_key is not None
+            else parsed.scheme == "https" and parsed.hostname not in loopback
+        )
 
     def complete(self, messages: Sequence[dict[str, str]], cancel_event: threading.Event | None = None) -> ProviderResponse:
         if cancel_event is not None and cancel_event.is_set():
             raise ProviderError("cancelled")
         api_key = os.environ.get(self.api_key_env)
-        if not api_key:
+        if self.requires_api_key and not api_key:
             raise ProviderError(f"provider credential is missing: {self.api_key_env}")
         body = json.dumps(
             {"model": self.model, "messages": list(messages), "tools": _tool_definitions()}
         ).encode()
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if api_key:
+            headers["Authorization"] = "Bearer " + api_key
         request = Request(
             self.endpoint,
             data=body,
-            headers={
-                "Authorization": "Bearer " + api_key,
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
         try:
-            # Use short timeouts with cancel checks
-            timeout = min(self.timeout_seconds, 10.0)
-            with urlopen(request, timeout=timeout) as response:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
                 if cancel_event is not None and cancel_event.is_set():
                     raise ProviderError("cancelled")
                 payload = json.loads(response.read())
         except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             if cancel_event is not None and cancel_event.is_set():
                 raise ProviderError("cancelled")
-            raise ProviderError("provider request failed") from exc
+            detail = str(exc).strip().replace("\n", " ")
+            if len(detail) > 200:
+                detail = detail[:200] + "..."
+            raise ProviderError(f"provider request failed: {type(exc).__name__}: {detail}") from exc
         try:
             message = payload["choices"][0]["message"]
-            tool_calls = tuple(
-                ToolCall(
-                    str(item["function"]["name"]),
-                    json.loads(item["function"]["arguments"]),
-                )
-                for item in message.get("tool_calls", [])
-            )
+            raw_tool_calls = message.get("tool_calls") or []
+            tool_calls = tuple(_parse_openai_tool_call(item) for item in raw_tool_calls)
+            if not tool_calls:
+                tool_calls = _parse_tool_calls_from_content(str(message.get("content") or ""))
             usage = payload.get("usage", {})
             return ProviderResponse(
                 content=str(message.get("content") or ""),
@@ -91,10 +107,127 @@ class OpenAICompatibleProvider:
                 output_tokens=usage.get("completion_tokens"),
                 finish_reason=payload["choices"][0].get("finish_reason"),
             )
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
             if cancel_event is not None and cancel_event.is_set():
                 raise ProviderError("cancelled")
             raise ProviderError("provider returned an invalid response") from exc
+
+
+def probe_provider(config: ProviderConfig) -> dict[str, object]:
+    """Make a bounded, credential-safe connectivity request for a provider config."""
+    endpoint = config.endpoint
+    api_key_env = config.api_key_env
+    requires_api_key = config.requires_api_key
+    timeout_seconds = config.timeout_seconds
+    api_key = os.environ.get(api_key_env)
+    if requires_api_key and not api_key:
+        raise ProviderError(f"provider credential is missing: {api_key_env}")
+    parsed = urlparse(endpoint.rstrip("/"))
+    if parsed.hostname in {"127.0.0.1", "localhost", "::1"} or not requires_api_key:
+        url = endpoint.rstrip("/") + "/api/tags"
+    else:
+        url = endpoint.rstrip("/") + ("" if endpoint.rstrip("/").endswith("/v1") else "/v1") + "/models"
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
+    try:
+        with urlopen(Request(url, headers=headers, method="GET"), timeout=timeout_seconds) as response:
+            payload = json.loads(response.read())
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        detail = str(exc).strip().replace("\n", " ")
+        if len(detail) > 200:
+            detail = detail[:200] + "..."
+        raise ProviderError(f"provider probe failed: {type(exc).__name__}: {detail}") from exc
+    if not isinstance(payload, dict):
+        raise ProviderError("provider probe returned an invalid response")
+    models = payload.get("models") or payload.get("data") or []
+    return {"endpoint": endpoint, "reachable": True, "models": models}
+
+
+def _parse_openai_tool_call(item: dict[str, object]) -> ToolCall:
+    function = item.get("function")
+    if not isinstance(function, dict):
+        raise TypeError("tool call missing function")
+    name = str(function.get("name") or "")
+    if not name:
+        raise ValueError("tool call missing name")
+    raw_args = function.get("arguments", {})
+    if isinstance(raw_args, str):
+        args = json.loads(raw_args) if raw_args.strip() else {}
+    elif isinstance(raw_args, dict):
+        args = raw_args
+    else:
+        raise TypeError("tool call arguments must be object or JSON string")
+    if not isinstance(args, dict):
+        raise TypeError("tool call arguments must decode to an object")
+    return ToolCall(name, args)
+
+
+def _parse_tool_calls_from_content(content: str) -> tuple[ToolCall, ...]:
+    text = content.strip()
+    if not text:
+        return ()
+    candidates: list[object] = []
+    try:
+        parsed = json.loads(text)
+        candidates.append(parsed)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        idx = 0
+        while idx < len(text):
+            while idx < len(text) and text[idx].isspace():
+                idx += 1
+            if idx >= len(text):
+                break
+            if text[idx] not in "{[":
+                # Try line-based JSON objects for some local model outputs.
+                nl = text.find("\n", idx)
+                if nl == -1:
+                    break
+                idx = nl + 1
+                continue
+            try:
+                obj, end = decoder.raw_decode(text, idx)
+                candidates.append(obj)
+                idx = end
+            except json.JSONDecodeError:
+                nl = text.find("\n", idx)
+                if nl == -1:
+                    break
+                idx = nl + 1
+    calls: list[ToolCall] = []
+    for item in candidates:
+        if isinstance(item, list):
+            for sub in item:
+                call = _coerce_tool_call(sub)
+                if call is not None:
+                    calls.append(call)
+        else:
+            call = _coerce_tool_call(item)
+            if call is not None:
+                calls.append(call)
+    return tuple(calls)
+
+
+def _coerce_tool_call(item: object) -> ToolCall | None:
+    if not isinstance(item, dict):
+        return None
+    name = item.get("name")
+    args = item.get("arguments")
+    if not isinstance(name, str) or not name:
+        function = item.get("function")
+        if isinstance(function, dict) and isinstance(function.get("name"), str):
+            name = function["name"]
+            args = function.get("arguments", args)
+    if not isinstance(name, str) or not name:
+        return None
+    if args is None:
+        args = {}
+    if isinstance(args, str):
+        args = json.loads(args) if args.strip() else {}
+    if not isinstance(args, dict):
+        return None
+    return ToolCall(name, args)
 
 
 def _tool_definitions() -> list[dict[str, object]]:
@@ -130,7 +263,7 @@ def _tool_definitions() -> list[dict[str, object]]:
             "type": "function",
             "function": {
                 "name": "edit",
-                "description": "Replace a UTF-8 text file in the assigned worktree.",
+                "description": "Create or replace a UTF-8 text file in the assigned worktree.",
                 "parameters": {
                     "type": "object",
                     "properties": {

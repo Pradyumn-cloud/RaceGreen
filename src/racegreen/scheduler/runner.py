@@ -35,19 +35,21 @@ class RaceScheduler:
         artifacts_root: Path | None = None,
         budgets: RunBudgets | None = None,
         provider_factory: Any = None,
+        allow_dirty: bool = False,
     ) -> None:
         self.repository = repository
         self.task = task
         self.agents_count = max(1, agents)
         self.max_concurrency = max_concurrency if max_concurrency is not None else max(1, self.agents_count)
-        if self.agents_count > self.max_concurrency:
-            raise ValueError(f"agents ({self.agents_count}) exceeds max-concurrency ({self.max_concurrency})")
+        if self.max_concurrency < 1:
+            raise ValueError("max-concurrency must be at least 1")
         self.manager = WorkspaceManager(repository, artifacts_root)
         self.budgets = budgets or RunBudgets()
         self.budget_tracker = BudgetTracker(self.budgets)
         self.cancellation = CancellationCoordinator()
         self.rate_limiter = SharedRateLimiter()
         self.provider_factory = provider_factory
+        self.allow_dirty = allow_dirty
         self._run_id = uuid.uuid4().hex
         self._state = RunState.PREPARING
         self._lock = threading.RLock()
@@ -103,7 +105,8 @@ class RaceScheduler:
         try:
             os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
             self._record_bench("run_start")
-            layout = self.manager.create_run()
+            layout = self.manager.create_run(allow_dirty=self.allow_dirty)
+            self._run_id = layout.run_id
             self._record_bench("workspace_ready")
             events = EventStore(layout.artifacts / "run_events.jsonl")
             self._events = events
@@ -172,7 +175,7 @@ class RaceScheduler:
                 "cancel_latency": self.cancellation.cancel_latency(),
             }
             try:
-                events.append_atomic("run_finished", run_id=self._run_id, agent_id="scheduler", late_check=False, **summary)
+                events.append_atomic("run_finished", agent_id="scheduler", late_check=False, **summary)
             except Exception as e:
                 raise RuntimeError(f"event store failure: {e}") from e
             return summary
@@ -210,6 +213,7 @@ class RaceScheduler:
                     model=config.model,
                     api_key_env=config.api_key_env,
                     timeout_seconds=config.timeout_seconds,
+                    requires_api_key=config.requires_api_key,
                 )
             runner = AgentRunner(provider, events, intake=self.intake, is_terminal=events.is_terminal())
             if self.cancellation.is_cancelled:

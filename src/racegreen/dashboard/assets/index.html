@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>RaceGreen // Control Plane</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">◆</span><span>RACEGREEN</span></div>
+    <div class="eyebrow">Workspaces &amp; workflows</div>
+    <nav class="nav" aria-label="Dashboard sections">
+      <button class="active" data-view="overview"><span aria-hidden="true">▦</span><span>Overview / Runs</span></button>
+      <button data-view="help"><span aria-hidden="true">?</span><span>Help &amp; Commands</span></button>
+    </nav>
+    <div class="side-status">
+      <div><i class="dot" id="sideDot"></i><b id="sideLabel">LOCAL TRACE</b></div>
+      <div class="metric-note" id="sideNote">SQLite trace store</div>
+    </div>
+  </aside>
+
+  <section class="content">
+    <header class="topbar">
+      <h1 id="viewTitle">OVERVIEW / RUNS</h1>
+      <div class="topbar-spacer"></div>
+      <span class="connection" id="connection" aria-live="polite"><i class="dot"></i><span id="connectionText">OFFLINE</span></span>
+      <button class="top-action" id="refresh" type="button">↻ REFRESH</button>
+      <button class="primary" id="newRun" type="button">＋ NEW RUN</button>
+    </header>
+
+    <main class="page">
+      <div id="overviewPage">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">RaceGreen control plane</div>
+            <h2>Agent operations</h2>
+            <p>Inspect persisted runs, candidate snapshots, verification evidence, and live trace activity.</p>
+          </div>
+          <div class="head-actions">
+            <button class="ghost" id="copyCommand" type="button">▣ COPY CLI</button>
+            <button class="ghost" id="toggleAuto" type="button">AUTO-REFRESH: ON</button>
+          </div>
+        </div>
+
+        <div class="metrics" aria-label="Trace summary">
+          <div class="metric"><div class="metric-label">Total runs</div><div class="metric-value" id="mTotal">—</div><div class="metric-note">persisted in SQLite</div></div>
+          <div class="metric green"><div class="metric-label">Active</div><div class="metric-value" id="mActive">—</div><div class="metric-note">preparing, running, cancelling</div></div>
+          <div class="metric violet"><div class="metric-label">Candidates</div><div class="metric-value" id="mCandidates">—</div><div class="metric-note">all recorded snapshots</div></div>
+          <div class="metric amber"><div class="metric-label">Events</div><div class="metric-value" id="mEvents">—</div><div class="metric-note">trace source of truth</div></div>
+          <div class="metric cyan"><div class="metric-label">Verified winners</div><div class="metric-value" id="mWinners">—</div><div class="metric-note">full-suite evidence recorded</div></div>
+        </div>
+
+        <div class="workspace">
+          <section class="panel run-panel">
+            <div class="panel-head"><h3>Run queue</h3><span class="right" id="runCount">0 runs</span></div>
+            <div class="run-tools">
+              <input id="runSearch" class="search" placeholder="Search run ID, state, or commit..." aria-label="Search runs">
+              <select id="stateFilter" class="select" aria-label="Filter runs by state"><option value="">ALL STATES</option></select>
+            </div>
+            <div class="run-list" id="runs"><div class="empty">Loading run queue...</div></div>
+          </section>
+
+          <section class="panel detail">
+            <div class="panel-head">
+              <div>
+                <div class="run-title" id="detailTitle">Select a run <small>to inspect its evidence</small></div>
+                <div class="metric-note" id="detailSub"></div>
+              </div>
+              <span class="right" id="detailStatus"></span>
+            </div>
+            <div class="detail-grid">
+              <div class="stat"><span>Agents</span><b id="sAgents">—</b></div>
+              <div class="stat"><span>Candidates</span><b id="sCandidates">—</b></div>
+              <div class="stat"><span>Events</span><b id="sEvents">—</b></div>
+              <div class="stat"><span>Winner</span><b id="sWinner">—</b></div>
+              <div class="stat"><span>Last sequence</span><b id="sSequence">—</b></div>
+            </div>
+            <div class="tabs" role="tablist" aria-label="Run detail sections">
+              <button class="tab active" data-tab="candidates" type="button">CANDIDATES</button>
+              <button class="tab" data-tab="timeline" type="button">EVENT TIMELINE</button>
+              <button class="tab" data-tab="evidence" type="button">EVIDENCE</button>
+              <button class="tab" data-tab="agents" type="button">AGENTS</button>
+            </div>
+            <div class="tab-body" id="tabBody"><div class="empty">Choose a run from the queue.</div></div>
+          </section>
+        </div>
+      </div>
+
+      <div class="help-page" id="helpPage">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Operator handbook</div>
+            <h2>Help &amp; commands</h2>
+            <p class="help-intro">Configure a provider, run agents, inspect evidence, open this dashboard, and safely clean up. Copy a command, replace the values in angle brackets, and run it from the project directory. The dashboard is read-only and never executes repository commands.</p>
+          </div>
+        </div>
+        <input class="search help-search" id="helpSearch" placeholder="Search commands and workflows..." aria-label="Search help">
+        <div class="help-grid" id="helpCards">
+          <article class="help-card"><h3>First setup</h3><p>Create a provider profile without storing credentials.</p><div class="command-row"><pre class="command">uv run racegreen setup</pre><button class="copy-small" data-copy="uv run racegreen setup" type="button">COPY</button></div><p class="help-note">Choose Ollama for a local model or a hosted provider. Existing RACEGREEN_* environment variables override the file.</p></article>
+          <article class="help-card"><h3>Check readiness</h3><p>Check Python, Git, provider configuration, and home directory.</p><div class="command-row"><pre class="command">uv run racegreen doctor</pre><button class="copy-small" data-copy="uv run racegreen doctor" type="button">COPY</button></div><p class="help-note">A local provider may work without an API key. Use provider-test for a real endpoint check.</p></article>
+          <article class="help-card"><h3>Test provider</h3><p>Check that the configured endpoint responds.</p><div class="command-row"><pre class="command">uv run racegreen provider-test</pre><button class="copy-small" data-copy="uv run racegreen provider-test" type="button">COPY</button></div><p class="help-note">This does not send a model completion.</p></article>
+          <article class="help-card"><h3>Run one agent</h3><p>Run one bounded coding agent in an isolated worktree.</p><div class="command-row"><pre class="command">uv run racegreen agent-run . "&lt;task&gt;"</pre><button class="copy-small" data-copy='uv run racegreen agent-run . "&lt;task&gt;"' type="button">COPY</button></div><p class="help-note">The source repository is not modified automatically.</p></article>
+          <article class="help-card"><h3>Run a race</h3><p>Run multiple agents against the same task.</p><div class="command-row"><pre class="command">uv run racegreen race . "&lt;task&gt;" --agents 2 --max-concurrency 2</pre><button class="copy-small" data-copy='uv run racegreen race . "&lt;task&gt;" --agents 2 --max-concurrency 2' type="button">COPY</button></div><p class="help-note">A winner requires configured full-suite confirmation.</p></article>
+          <article class="help-card"><h3>Inspect runs</h3><p>List recorded runs and inspect one run.</p><div class="command-row"><pre class="command">uv run racegreen runs
+uv run racegreen run-show &lt;RUN_ID&gt;</pre><button class="copy-small" data-copy="uv run racegreen runs" type="button">COPY</button></div><p class="help-note">Copy the run ID from the list, then inspect its candidates and events.</p></article>
+          <article class="help-card"><h3>Open dashboard</h3><p>Open this local operator console.</p><div class="command-row"><pre class="command">uv run racegreen dashboard --open</pre><button class="copy-small" data-copy="uv run racegreen dashboard --open" type="button">COPY</button></div><p class="help-note">The server is loopback-only and the dashboard is read-only.</p></article>
+          <article class="help-card"><h3>HTML report</h3><p>Create a standalone report for one run.</p><div class="command-row"><pre class="command">uv run racegreen report &lt;RUN_ID&gt; --output racegreen-report.html</pre><button class="copy-small" data-copy="uv run racegreen report &lt;RUN_ID&gt; --output racegreen-report.html" type="button">COPY</button></div><p class="help-note">Open the generated file in a browser.</p></article>
+          <article class="help-card"><h3>Events</h3><p>List, export, or replay the event timeline.</p><div class="command-row"><pre class="command">uv run racegreen events list &lt;RUN_ID&gt;
+uv run racegreen events export &lt;RUN_ID&gt; --output events.jsonl
+uv run racegreen-replay show events.jsonl</pre><button class="copy-small" data-copy="uv run racegreen events list &lt;RUN_ID&gt;" type="button">COPY</button></div><p class="help-note">Events are the persisted trace source of truth.</p></article>
+          <article class="help-card"><h3>Verify database</h3><p>Check SQLite integrity and event invariants.</p><div class="command-row"><pre class="command">uv run racegreen db verify</pre><button class="copy-small" data-copy="uv run racegreen db verify" type="button">COPY</button></div><p class="help-note">Run this after unusual interruptions or manual event ingestion.</p></article>
+          <article class="help-card"><h3>Rebuild projections</h3><p>Replay the persisted event trace into run, agent, and candidate projections.</p><div class="command-row"><pre class="command">uv run racegreen db rebuild</pre><button class="copy-small" data-copy="uv run racegreen db rebuild" type="button">COPY</button></div><p class="help-note">Useful after an older database is upgraded. Winners are preserved.</p></article>
+          <article class="help-card"><h3>Offline demo</h3><p>Try the persistence and report flow without an API.</p><div class="command-row"><pre class="command">uv run racegreen demo</pre><button class="copy-small" data-copy="uv run racegreen demo" type="button">COPY</button></div><p class="help-note">The demo does not measure agent quality.</p></article>
+          <article class="help-card"><h3>Clean artifacts</h3><p>List or remove only RaceGreen-owned run folders.</p><div class="command-row"><pre class="command">uv run racegreen clean
+uv run racegreen clean --run-id &lt;RUN_ID&gt; --yes</pre><button class="copy-small" data-copy="uv run racegreen clean" type="button">COPY</button></div><p class="help-note">Review the list before removing a run.</p></article>
+          <article class="help-card"><h3>Review and apply</h3><p>Review a candidate patch before changing your repository.</p><div class="command-row"><pre class="command">git diff
+git apply --check &lt;PATCH_PATH&gt;
+git apply &lt;PATCH_PATH&gt;</pre><button class="copy-small" data-copy="git apply --check &lt;PATCH_PATH&gt;" type="button">COPY</button></div><p class="help-note">The dashboard does not apply changes. Create a review branch first and verify the target is clean.</p></article>
+        </div>
+      </div>
+    </main>
+  </section>
+</div>
+
+<div class="drawer-backdrop hidden" id="drawerBackdrop">
+  <aside class="drawer" id="candidateDrawer" aria-labelledby="drawerTitle" aria-modal="true" role="dialog">
+    <div class="drawer-head">
+      <div><div class="eyebrow">Candidate snapshot</div><h2 id="drawerTitle">Candidate</h2><div class="metric-note" id="drawerMeta"></div></div>
+      <button class="ghost" id="closeDrawer" type="button">CLOSE</button>
+    </div>
+    <div class="drawer-body">
+      <div class="drawer-section"><div class="eyebrow">Patch</div><pre class="code patch" id="drawerPatch">Loading patch...</pre></div>
+      <div class="drawer-section"><div class="eyebrow">Candidate events</div><div id="drawerEvents"><div class="empty">Loading events...</div></div></div>
+    </div>
+  </aside>
+</div>
+
+<div class="modal-backdrop hidden" id="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newRunTitle">
+    <h3 id="newRunTitle">Prepare a new RaceGreen run</h3>
+    <p class="metric-note">This dialog only prepares a copyable CLI command. It does not execute commands from the browser.</p>
+    <div class="form-grid">
+      <label>Repository <input id="formRepo" value="." autocomplete="off"></label>
+      <label>Task <input id="formTask" value="Describe the task" autocomplete="off"></label>
+      <label>Agents <input id="formAgents" type="number" min="1" max="16" value="2"></label>
+      <label>Max concurrency <input id="formConcurrency" type="number" min="1" max="16" value="2"></label>
+    </div>
+    <div class="code" id="commandBox">uv run racegreen race . "Describe the task" --agents 2 --max-concurrency 2</div>
+    <div class="modal-actions">
+      <button class="ghost" id="closeModal" type="button">CLOSE</button>
+      <button class="primary" id="modalCopy" type="button">COPY COMMAND</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+<script src="/assets/app.js" defer></script>
+</body>
+</html>
