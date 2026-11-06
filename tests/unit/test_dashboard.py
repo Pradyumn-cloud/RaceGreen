@@ -319,15 +319,15 @@ def test_dashboard_streams_persisted_events(tmp_path) -> None:
             "Accept: text/event-stream\r\n\r\n"
         )
         sock.sendall(request.encode("ascii"))
-        headers = b""
-        while b"\r\n\r\n" not in headers:
+        raw = b""
+        while b"\r\n\r\n" not in raw:
             chunk = sock.recv(4096)
             if not chunk:
                 break
-            headers += chunk
+            raw += chunk
+        headers, _, body = raw.partition(b"\r\n\r\n")
         assert b"HTTP/1.1 200 OK" in headers
         assert b"text/event-stream" in headers
-        body = b""
         while b"data:" not in body:
             chunk = sock.recv(4096)
             if not chunk:
