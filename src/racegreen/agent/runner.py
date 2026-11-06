@@ -43,6 +43,18 @@ class AgentRunner:
         if result is None:
             return AgentStatus.CANCELLED
         messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a coding agent working in an isolated git worktree. "
+                    "Use the provided tools to inspect and modify files. "
+                    "Prefer making targeted, working changes. "
+                    "When the task is complete, you MUST call submit_candidate. "
+                    "Do not paste full file contents in chat unless necessary; use the edit tool to write files. "
+                    "If tool calls are supported, use them; otherwise respond with a JSON object "
+                    '{"name":"<tool>","arguments":{...}}.'
+                ),
+            },
             {"role": "user", "content": context.task_prompt},
         ]
         tools = WorkspaceTools(

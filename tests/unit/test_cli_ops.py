@@ -16,6 +16,7 @@ def test_init_writes_no_credentials(tmp_path):
 
 def test_doctor_reports_checks(monkeypatch):
     monkeypatch.delenv("RACEGREEN_API_KEY", raising=False)
+    monkeypatch.setenv("RACEGREEN_MODEL", "test-model")
     result = CliRunner().invoke(app, ["doctor"])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["checks"]["provider_configured"] is False
