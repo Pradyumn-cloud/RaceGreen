@@ -66,3 +66,25 @@ def test_dashboard_exposes_events_and_winner_state(tmp_path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_dashboard_help_page_contains_supported_workflows(tmp_path) -> None:
+    db = RaceDB(tmp_path / "racegreen.db")
+    server = create_server(db, port=0)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        page = response.read().decode("utf-8")
+        assert response.status == 200
+        assert "Help &amp; commands" in page
+        assert "racegreen provider-test" in page
+        assert "racegreen db verify" in page
+        assert 'data-view="provider"' not in page
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
