@@ -31,6 +31,7 @@ replay_app = typer.Typer(no_args_is_help=True)
 db_app = typer.Typer(no_args_is_help=True)
 events_app = typer.Typer(no_args_is_help=True)
 DEFAULT_DB = Path.home() / ".racegreen" / "racegreen.db"
+DEFAULT_ARTIFACTS_ROOT = Path.home() / ".racegreen" / "runs"
 app.add_typer(db_app, name="db")
 app.add_typer(events_app, name="events")
 
@@ -256,6 +257,15 @@ def db_verify(
         raise typer.Exit(code=1)
 
 
+@db_app.command("rebuild")
+def db_rebuild(
+    database: Path = typer.Option(DEFAULT_DB, "--database"),  # noqa: B008
+) -> None:
+    """Replay the persisted event trace into run, agent, and candidate projections."""
+    result = _db(database).rebuild_projections()
+    typer.echo(json.dumps(result, sort_keys=True))
+
+
 @events_app.command("list")
 def events_list(
     run_id: str = typer.Argument(...),
@@ -356,10 +366,19 @@ def dashboard(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8765, "--port", min=0, max=65535),
     open_browser: bool = typer.Option(False, "--open"),
+    artifacts_root: Path = typer.Option(  # noqa: B008
+        DEFAULT_ARTIFACTS_ROOT, "--artifacts-root"
+    ),
 ) -> None:
-    """Open the local run dashboard; it is loopback-only by default."""
+    """Open the local run dashboard; it is loopback-only and read-only."""
     try:
-        serve_dashboard(_db(database), host=host, port=port, open_browser=open_browser)
+        serve_dashboard(
+            _db(database),
+            host=host,
+            port=port,
+            open_browser=open_browser,
+            artifacts_root=artifacts_root,
+        )
     except KeyboardInterrupt:
         typer.echo("Dashboard stopped.")
 
