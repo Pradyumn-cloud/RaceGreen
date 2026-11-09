@@ -53,16 +53,25 @@ RaceGreen uses an OpenAI-compatible chat-completions provider.
 The easiest setup is:
 
 ```bash
-uv run racegreen setup
+uv run racegreen quickstart --provider ollama --model qwen2.5-coder:7b
 uv run racegreen doctor
 uv run racegreen provider-test
 ```
 
-Setup writes provider metadata, never credentials. Existing `RACEGREEN_*`
-environment variables remain supported and override file values. Local
-providers do not require API keys. RaceGreen probes the endpoint you
-configure; it does not guess WSL gateway addresses, start services, or
-download models.
+Use `racegreen setup` for an interactive wizard. Setup writes provider
+metadata, never credentials. Existing `RACEGREEN_*` environment variables
+remain supported and override file values. Local providers do not require API
+keys. RaceGreen probes the endpoint you configure; it does not guess WSL
+gateway addresses, start services, or download models.
+
+The user configuration path is platform-specific (`%APPDATA%\racegreen\config.json`
+on Windows, `$XDG_CONFIG_HOME/racegreen/config.json` or
+`~/.config/racegreen/config.json` elsewhere). Override it with
+`RACEGREEN_CONFIG`. `racegreen init --repo .` writes repository-local settings
+to `.racegreen/config.json`; local values override global values, and files
+containing credential-looking keys are rejected. `racegreen doctor --fix`
+creates safe directories and a missing config template without overwriting an
+existing configuration.
 
 ### Hosted provider
 
@@ -250,7 +259,8 @@ The source repository is not automatically changed.
 uv run racegreen race /path/to/repository \
   "Fix the failing test and verify the complete test suite." \
   --agents 2 \
-  --max-concurrency 2
+  --max-concurrency 2 \
+  --verification-command "pytest -q"
 ```
 
 Additional controls:
@@ -262,14 +272,81 @@ uv run racegreen race /path/to/repository "Fix the failing test" \
   --timeout-seconds 300 \
   --max-tokens-per-run 20000 \
   --max-cost-usd-per-run 2.00 \
+  --max-full-suite-runs 10 \
+  --max-changed-files 20 \
+  --max-changed-lines 500 \
+  --hedge-delay 1.5 \
+  --agent-model qwen2.5-coder:7b \
+  --agent-model qwen2.5-coder:14b \
+  --winner-policy first_confirmed \
   --artifacts-root "$HOME/.racegreen/runs" \
   --database "$HOME/.racegreen/racegreen.db"
 ```
 
-`--agents` must not exceed `--max-concurrency`. Press `Ctrl+C` to request
-cancellation. A successful candidate still requires configured full-suite
-confirmation; selected tests, agent claims, or model review cannot declare a
-winner by themselves.
+`--agents` must not exceed `--max-concurrency`. Local providers default to one
+concurrent agent. `--agent-model` is repeatable; agents receive models in
+rotation. `--hedge-delay` staggers agent starts without changing verification.
+Press `Ctrl+C` to request cancellation; the process tree is terminated and late
+candidates are rejected.
+
+A successful candidate always requires configured full-suite confirmation;
+selected tests, agent claims, or model review cannot declare a winner by
+themselves. Verification rejects missing JUnit output, new failures relative to
+the base-commit baseline, clone/checkout/apply failures, and configured quality
+gates. If the base commit already has unrelated failures, a candidate is
+confirmed only when the configured target-test command passes and the
+full-suite failure set is unchanged or smaller; without a separate target-test
+command, baseline failures remain fatal. If no candidate is confirmed the run
+ends `EXHAUSTED`.
+
+Winner policies:
+
+- `first_confirmed` — declare the earliest fully confirmed candidate.
+- `best_of_confirmed` — choose the smallest confirmed patch; earlier
+  confirmation is the tie-break. Patch size is disclosed and is not correctness
+  evidence.
+- `consensus` — require a quorum of confirmed candidates with the same patch
+  hash. Use `--consensus-quorum` to override the default quorum.
+
+The race automatically exports a reviewable winner patch and evidence unless
+`--require-approval` is set. Integration is a separate, re-checked operation:
+
+```bash
+uv run racegreen winner show --run-id RUN_ID
+uv run racegreen winner export --run-id RUN_ID --output winner.patch
+uv run racegreen winner branch --run-id RUN_ID --branch racegreen/winner
+uv run racegreen winner apply --run-id RUN_ID
+```
+
+`winner apply` refuses a target whose state changed since the captured base
+commit and defaults to a reviewable patch or branch rather than modifying the
+user's current branch.
+
+An external agent command can replace the built-in provider loop:
+
+```bash
+uv run racegreen race . "Fix the failing test" \
+  --external-agent "my-agent --non-interactive" \
+  --verification-command "pytest -q"
+```
+
+The command runs once in each worktree without a shell and submits the worktree
+snapshot through the normal candidate intake path. It receives the task in
+`RACEGREEN_TASK` plus `RACEGREEN_RUN_ID`, `RACEGREEN_AGENT_ID`, and
+`RACEGREEN_WORKTREE`. It is not a security sandbox.
+
+Verification can run in Docker:
+
+```bash
+uv run racegreen race . "Fix the failing test" \
+  --verification-command "python -m pytest -q" \
+  --sandbox docker \
+  --sandbox-image my-test-image:latest
+```
+
+Only the disposable verification checkout is mounted, at `/work`. The default
+network is `none`, the root filesystem is read-only, and `/tmp` is writable.
+The image must contain the test runtime and dependencies.
 
 ## 8. Database and run inspection
 
@@ -412,13 +489,14 @@ uv run python scripts/benchmark_budget.py \
   --seconds-per-run 300
 ```
 
-Run the offline replay harness:
+Run the real pipeline harness:
 
 ```bash
 uv run python scripts/benchmark.py \
   --split dev \
+  --engine pipeline \
   --repeats 1 \
-  --output "$HOME/.racegreen/dev-replay.jsonl"
+  --output "$HOME/.racegreen/dev-pipeline.jsonl"
 ```
 
 Run one task while debugging the harness:
@@ -426,17 +504,33 @@ Run one task while debugging the harness:
 ```bash
 uv run python scripts/benchmark.py \
   --split dev \
+  --engine pipeline \
   --task tier1-01 \
   --repeats 1 \
   --output "$HOME/.racegreen/tier1-01.jsonl"
+```
+
+The fixture engine is still available for fast protocol checks, but it is not
+evidence for RaceGreen's verification or arbitration behavior:
+
+```bash
+uv run python scripts/benchmark.py \
+  --split dev \
+  --engine fixture \
+  --output "$HOME/.racegreen/dev-fixture.jsonl"
 ```
 
 Analyze results:
 
 ```bash
 uv run python scripts/analyze_results.py \
-  "$HOME/.racegreen/dev-replay.jsonl"
+  "$HOME/.racegreen/dev-pipeline.jsonl"
 ```
+
+Analysis reports metrics per arm, bootstrap confidence intervals, false-winner
+counts, full-suite runs avoided, and a single-agent comparison. Held-out tests
+are applied to a fresh repository only after a winner is confirmed, so a
+visible-suite pass is not counted as a resolved task.
 
 Replay recorded candidate responses:
 
