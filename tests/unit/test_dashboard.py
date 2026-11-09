@@ -195,6 +195,7 @@ def test_dashboard_help_page_and_assets_are_served(tmp_path) -> None:
         assert "Help &amp; commands" in page
         assert "racegreen provider-test" in page
         assert "racegreen db verify" in page
+        assert 'data-tab="compare"' in page
         assert 'data-view="provider"' not in page
         assert "<script>" not in page
         assert 'style="' not in page
@@ -204,6 +205,7 @@ def test_dashboard_help_page_and_assets_are_served(tmp_path) -> None:
         response, body = _get(server, "/assets/app.js")
         assert response.status == 200
         assert b"EventSource" in body
+        assert b"renderCompare" in body
         assert response.getheader("X-Content-Type-Options") == "nosniff"
 
         response, body = _get(server, "/assets/app.css")
