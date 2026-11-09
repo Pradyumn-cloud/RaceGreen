@@ -6,6 +6,10 @@ import json
 import sqlite3
 import threading
 import time
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -144,8 +148,27 @@ class RaceDB:
         conn.execute("PRAGMA busy_timeout=30000")
         return conn
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Open a short-lived connection and always release its file handle.
+
+        The sqlite3 connection context manager commits or rolls back but does
+        not close the handle. On Windows an unclosed handle prevents temporary
+        directories and databases from being removed.
+        """
+        conn = self._connect()
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+        finally:
+            conn.close()
+
     def _init(self) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
             conn.commit()
@@ -209,32 +232,55 @@ class RaceDB:
     @classmethod
     def _bounded_json(cls, payload: dict[str, Any]) -> str:
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        original_bytes = len(encoded.encode("utf-8"))
+        if original_bytes <= cls.EVENT_LIMIT:
+            return encoded
+        marker = {"truncated": True, "original_bytes": original_bytes}
+        # Preserve identity and routing fields even when the rest of a large
+        # event is discarded. Values are untrusted, so cap their size too.
+        core_keys = (
+            "event",
+            "run_id",
+            "event_id",
+            "sequence",
+            "agent_id",
+            "candidate_id",
+            "timestamp",
+            "state",
+            "stage",
+            "patch_hash",
+            "base_commit",
+        )
+        bounded: dict[str, Any] = {}
+        for key in core_keys:
+            if key not in payload:
+                continue
+            value = payload[key]
+            if isinstance(value, str):
+                value = value[:2048]
+            bounded[key] = value
+        encoded = json.dumps({**bounded, **marker}, sort_keys=True, separators=(",", ":"))
         if len(encoded.encode("utf-8")) <= cls.EVENT_LIMIT:
             return encoded
-        marker = {"truncated": True, "original_bytes": len(encoded.encode("utf-8"))}
-        while (
-            len(json.dumps({**payload, **marker}, sort_keys=True).encode("utf-8"))
-            > cls.EVENT_LIMIT
-        ):
-            longest = max(
-                (key for key, value in payload.items() if isinstance(value, str)),
-                key=len,
-                default="",
-            )
-            if not longest:
-                break
-            payload = {key: value for key, value in payload.items() if key != longest}
-        return json.dumps({**payload, **marker}, sort_keys=True, separators=(",", ":"))
+        # Last resort: retain only the fields required to identify the event.
+        minimal = {
+            key: bounded.get(key)
+            for key in ("event", "run_id", "event_id", "sequence")
+            if key in bounded
+        }
+        return json.dumps(
+            {**minimal, **marker}, sort_keys=True, separators=(",", ":")
+        )
 
     def append_event(self, record: dict[str, Any]) -> dict[str, Any]:
         run_id = str(record["run_id"])
         event_type = str(record.get("event", ""))
         if not event_type:
             raise ValueError("event record must contain event")
-        event_id = str(record.get("event_id") or f"{run_id}:{time.time_ns()}")
+        event_id = str(record.get("event_id") or f"{run_id}:{uuid.uuid4().hex}")
         payload = dict(record)
         payload["event_id"] = event_id
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
                 "SELECT payload_json FROM run_events WHERE event_id = ?", (event_id,)
@@ -275,7 +321,7 @@ class RaceDB:
         return count
 
     def event_count(self, run_id: str) -> int:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) AS count FROM run_events WHERE run_id = ?", (run_id,)
             ).fetchone()
@@ -319,7 +365,7 @@ class RaceDB:
 
         order = "DESC" if latest else "ASC"
         params.append(limit)
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             rows = conn.execute(
                 "SELECT payload_json FROM run_events "
                 f"WHERE {' AND '.join(clauses)} "
@@ -334,7 +380,7 @@ class RaceDB:
     def list_runs(self, limit: int = 100) -> list[dict[str, Any]]:
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             rows = conn.execute(
                 "SELECT r.*, "
                 "(SELECT COUNT(*) FROM agents a WHERE a.run_id = r.run_id) AS agent_count, "
@@ -349,7 +395,7 @@ class RaceDB:
             return [dict(row) for row in rows]
 
     def run_snapshot(self, run_id: str) -> dict[str, Any]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             run = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
             if run is None:
                 raise KeyError(f"unknown run: {run_id}")
@@ -391,7 +437,7 @@ class RaceDB:
             }
 
     def overview(self) -> dict[str, Any]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             run_by_state = {
                 str(row["state"]): int(row["count"])
                 for row in conn.execute(
@@ -464,7 +510,7 @@ class RaceDB:
             }
 
     def rebuild_projections(self) -> dict[str, int]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             counts = self._rebuild_projections(conn)
             conn.commit()
@@ -498,7 +544,7 @@ class RaceDB:
         }
 
     def verify(self) -> dict[str, Any]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
             if integrity != "ok":
                 raise RuntimeError(f"SQLite integrity check failed: {integrity}")
@@ -523,7 +569,7 @@ class RaceDB:
         base_commit: str,
         evidence: dict[str, Any],
     ) -> bool:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             if conn.execute(
                 "SELECT 1 FROM winners WHERE run_id = ?", (run_id,)
@@ -536,7 +582,7 @@ class RaceDB:
             if state and state["state"] in _TERMINAL_RUN_STATES:
                 conn.rollback()
                 return False
-            now = str(time.time())
+            now = datetime.now(UTC).isoformat()
             conn.execute(
                 "INSERT INTO runs(run_id, state, cause, updated_at) VALUES(?, ?, ?, ?) "
                 "ON CONFLICT(run_id) DO UPDATE SET "
@@ -595,7 +641,7 @@ class RaceDB:
             return True
 
     def get_winner(self, run_id: str) -> dict[str, Any] | None:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             return self._get_winner(conn, run_id)
 
     @staticmethod
@@ -621,7 +667,7 @@ class RaceDB:
         }
 
     def candidate_patch_path(self, run_id: str, candidate_id: str) -> str | None:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             row = conn.execute(
                 "SELECT patch_path FROM candidates WHERE run_id = ? AND candidate_id = ?",
                 (run_id, candidate_id),
