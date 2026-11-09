@@ -48,6 +48,7 @@ def snapshot_candidate(
             "--no-ext-diff",
             "--no-textconv",
             "--no-renames",
+            "--ignore-cr-at-eol",
             base_commit,
             "--",
         ],
@@ -58,7 +59,7 @@ def snapshot_candidate(
     )
     if result.returncode != 0 and result.returncode != 1:
         raise RuntimeError(f"Unable to snapshot candidate {candidate_id}")
-    patch = result.stdout
+    patch = result.stdout.replace(b"\r\n", b"\n")
     patch_hash = compute_patch_hash(patch)
     tmp = destination.with_suffix(destination.suffix + ".tmp")
     tmp.write_bytes(patch)
@@ -69,13 +70,26 @@ def snapshot_candidate(
 def verify_candidate_snapshot(repository: Path, candidate: CandidateSnapshot) -> None:
     patch = candidate.patch_path.resolve(strict=True)
     data = patch.read_bytes()
+    if not data.strip():
+        raise CandidateVerificationError("candidate patch is empty")
     if compute_patch_hash(data) != candidate.patch_hash:
         raise CandidateVerificationError("candidate patch hash changed")
     repository = repository.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix="racegreen-verify-") as temporary:
         checkout = Path(temporary) / "checkout"
         clone = subprocess.run(
-            ["git", "clone", "--no-hardlinks", str(repository), str(checkout)],
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.eol=lf",
+                "clone",
+                "--no-checkout",
+                "--no-hardlinks",
+                str(repository),
+                str(checkout),
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -84,7 +98,18 @@ def verify_candidate_snapshot(repository: Path, candidate: CandidateSnapshot) ->
         if clone.returncode != 0:
             raise CandidateVerificationError("unable to create verification checkout")
         checkout_result = subprocess.run(
-            ["git", "-C", str(checkout), "checkout", "--detach", candidate.base_commit],
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.eol=lf",
+                "-C",
+                str(checkout),
+                "checkout",
+                "--detach",
+                candidate.base_commit,
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -93,7 +118,19 @@ def verify_candidate_snapshot(repository: Path, candidate: CandidateSnapshot) ->
         if checkout_result.returncode != 0:
             raise CandidateVerificationError("candidate base commit is unavailable")
         applied = subprocess.run(
-            ["git", "-C", str(checkout), "apply", "--check", "--whitespace=nowarn", str(patch)],
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.eol=lf",
+                "-C",
+                str(checkout),
+                "apply",
+                "--check",
+                "--whitespace=nowarn",
+                str(patch),
+            ],
             check=False,
             capture_output=True,
             text=True,

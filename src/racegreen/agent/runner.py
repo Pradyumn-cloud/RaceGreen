@@ -1,35 +1,51 @@
 from __future__ import annotations
 
-import os
-import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from queue import Queue
+from typing import Any
 
 from ..verification.intake import CandidateIntake
-from .candidate import CandidateSnapshot, snapshot_candidate, verify_candidate_snapshot
+from .candidate import CandidateSnapshot
 from .events import EventStore
 from .models import AgentContext, AgentStatus, ProviderResponse
-from .provider import Provider, ProviderError
+from .provider import Provider, ProviderError, ProviderTimeout
 from .tools import ToolError, WorkspaceTools
 
 
 class AgentRunner:
     """Runs one provider conversation inside one assigned worktree."""
 
-    def __init__(self, provider: Provider, events: EventStore, intake: CandidateIntake | None = None, is_terminal: bool = False) -> None:
+    def __init__(
+        self,
+        provider: Provider,
+        events: EventStore,
+        intake: CandidateIntake | None = None,
+        is_terminal: bool | Callable[[], bool] = False,
+        usage_callback: Callable[..., None] | None = None,
+        rate_limiter: Any = None,
+        rate_limit_timeout_seconds: float = 30.0,
+    ) -> None:
         self.provider = provider
         self.events = events
         self.intake = intake or CandidateIntake(events=events)
         self.is_terminal = is_terminal
+        self.usage_callback = usage_callback
+        self.rate_limiter = rate_limiter
+        self.rate_limit_timeout_seconds = rate_limit_timeout_seconds
+        self.last_candidate: CandidateSnapshot | None = None
         self._cancelled = threading.Event()
-        # Set env for agent
-        os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
     def cancel(self) -> None:
         self._cancelled.set()
+
+    def _terminal(self) -> bool:
+        if callable(self.is_terminal):
+            return bool(self.is_terminal())
+        return bool(self.is_terminal) or self.events.is_terminal()
 
     def run(self, context: AgentContext, *, base_commit: str, candidate_dir: Path) -> AgentStatus:
         result = self.events.append_atomic(
@@ -75,11 +91,12 @@ class AgentRunner:
             return self._finish(context, AgentStatus.CANCELLED)
         try:
             for _ in range(context.limits.max_tool_calls):
-                if self._cancelled.is_set():
+                if self._cancelled.is_set() or self._terminal():
                     return self._finish(context, AgentStatus.CANCELLED)
-                if time.monotonic() - started >= context.limits.timeout_seconds:
+                remaining = context.limits.timeout_seconds - (time.monotonic() - started)
+                if remaining <= 0:
                     return self._finish(context, AgentStatus.TIMED_OUT)
-                response = self._complete(messages)
+                response = self._complete(messages, timeout_seconds=remaining)
                 if response is None:
                     self.events.append_atomic(
                         "late_response_rejected",
@@ -92,7 +109,7 @@ class AgentRunner:
                 if not response.tool_calls:
                     return self._finish(context, AgentStatus.COMPLETED)
                 for call in response.tool_calls:
-                    if self._cancelled.is_set():
+                    if self._cancelled.is_set() or self._terminal():
                         return self._finish(context, AgentStatus.CANCELLED)
                     if call.name == "submit_candidate":
                         # wait for child processes to exit (best effort)
@@ -104,7 +121,7 @@ class AgentRunner:
                             base_commit,
                             context.run_id,
                             context.agent_id,
-                            is_terminal=self.events.is_terminal() or self.is_terminal,
+                            is_terminal=self._terminal(),
                         )
                         if not intake_res.accepted or intake_res.snapshot is None:
                             self.events.append_atomic(
@@ -114,6 +131,7 @@ class AgentRunner:
                                 late_check=True,
                             )
                             return self._finish(context, AgentStatus.PROVIDER_FAILED)
+                        self.last_candidate = intake_res.snapshot
                         self.events.append_atomic(
                             "candidate_submitted",
                             run_id=context.run_id,
@@ -138,7 +156,11 @@ class AgentRunner:
                         output=output,
                     )
             return self._finish(context, AgentStatus.TIMED_OUT)
+        except ProviderTimeout:
+            return self._finish(context, AgentStatus.TIMED_OUT)
         except (ProviderError, ToolError, OSError, RuntimeError) as exc:
+            if type(exc).__name__ == "BudgetExceeded":
+                raise
             self.events.append_atomic(
                 "agent_failed",
                 run_id=context.run_id,
@@ -148,58 +170,59 @@ class AgentRunner:
             )
             return self._finish(context, AgentStatus.PROVIDER_FAILED)
 
-    def _complete(self, messages: list[dict[str, str]]) -> ProviderResponse | None:
-        result: Queue[tuple[ProviderResponse | None, BaseException | None]] = Queue(maxsize=1)
+    def _complete(
+        self, messages: list[dict[str, str]], *, timeout_seconds: float | None = None
+    ) -> ProviderResponse | None:
+        result: Queue[tuple[ProviderResponse | None, BaseException | None]] = Queue()
+        call_cancelled = threading.Event()
+        deadline = (
+            None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        )
 
         def call_provider() -> None:
             try:
+                if self.rate_limiter is not None:
+                    if not self.rate_limiter.acquire(timeout=self.rate_limit_timeout_seconds):
+                        raise ProviderError("provider rate limiter timeout")
                 try:
-                    resp = self.provider.complete(messages, cancel_event=self._cancelled)  # type: ignore
+                    resp = self.provider.complete(messages, cancel_event=call_cancelled)
                 except TypeError:
                     resp = self.provider.complete(messages)
                 result.put((resp, None))
             except (ProviderError, OSError, RuntimeError, ValueError) as exc:
+                if self.rate_limiter is not None and isinstance(exc, ProviderError):
+                    detail = str(exc).lower()
+                    if "429" in detail or "rate" in detail:
+                        self.rate_limiter.record_rate_limited()
+                result.put((None, exc))
+            except Exception as exc:  # noqa: BLE001 - never strand the caller
+                # A provider adapter may raise an unexpected exception. Put it
+                # on the queue so the waiting caller fails instead of blocking
+                # forever on an empty queue.
                 result.put((None, exc))
 
         thread = threading.Thread(target=call_provider, daemon=True)
         thread.start()
         while thread.is_alive():
-            if self._cancelled.wait(0.05):
+            if self._cancelled.wait(0.05) or self._terminal():
+                call_cancelled.set()
                 return None
+            if deadline is not None and time.monotonic() >= deadline:
+                call_cancelled.set()
+                raise ProviderTimeout("provider response timed out")
         response, error = result.get()
         if error is not None:
             raise error
         return response
 
-    def _submit(
-        self, context: AgentContext, arguments: dict[str, object], *, base_commit: str, candidate_dir: Path
-    ) -> CandidateSnapshot:
-        candidate_id = str(arguments.get("candidate_id") or uuid.uuid4().hex)
-        changed = self._changed_paths(Path(context.worktree), base_commit)
-        if any(path == "tests" or path.startswith("tests/") for path in changed):
-            raise ToolError("candidate modifies tests")
-        candidate = snapshot_candidate(
-            Path(context.worktree),
-            candidate_dir / f"{candidate_id}.patch",
-            candidate_id=candidate_id,
-            base_commit=base_commit,
-        )
-        verify_candidate_snapshot(Path(context.worktree), candidate)
-        return candidate
-
-    @staticmethod
-    def _changed_paths(worktree: Path, base_commit: str) -> tuple[str, ...]:
-        result = subprocess.run(
-            ["git", "-C", str(worktree), "diff", "--name-only", base_commit, "--"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise ToolError("unable to inspect candidate changes")
-        return tuple(line for line in result.stdout.splitlines() if line)
-
     def _record_response(self, context: AgentContext, response: ProviderResponse) -> None:
+        if self.usage_callback is not None:
+            tokens = (response.input_tokens or 0) + (response.output_tokens or 0)
+            self.usage_callback(
+                context.agent_id,
+                tokens=tokens,
+                output_bytes=len(response.content.encode("utf-8")),
+            )
         self.events.append_atomic(
             "provider_response",
             run_id=context.run_id,

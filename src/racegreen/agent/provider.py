@@ -17,6 +17,40 @@ class ProviderError(RuntimeError):
     """Raised when a provider cannot produce a valid response."""
 
 
+class ProviderTimeout(ProviderError):
+    """Raised when a provider call exceeds the agent's remaining budget."""
+
+
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+
+def _read_limited(response: object, limit: int = _MAX_RESPONSE_BYTES) -> bytes:
+    read = getattr(response, "read")
+    data = read(limit + 1)
+    if not isinstance(data, bytes):
+        raise ProviderError("provider response is not bytes")
+    if len(data) > limit:
+        raise ProviderError("provider response exceeds the size limit")
+    return data
+
+
+def _validate_remote_transport(endpoint: str) -> None:
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+        raise ValueError("provider endpoint must be an absolute HTTP(S) URL")
+    loopback = {"127.0.0.1", "localhost", "::1"}
+    allow_insecure = os.environ.get("RACEGREEN_ALLOW_INSECURE_HTTP", "").strip() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if parsed.scheme == "http" and parsed.hostname not in loopback and not allow_insecure:
+        raise ValueError(
+            "remote provider endpoints must use HTTPS; for trusted local HTTP providers "
+            "(e.g. WSL to host Ollama) set RACEGREEN_ALLOW_INSECURE_HTTP=1"
+        )
+
+
 class Provider(Protocol):
     def complete(self, messages: Sequence[dict[str, str]], cancel_event: threading.Event | None = None) -> ProviderResponse:
         """Return one bounded model response."""
@@ -35,19 +69,8 @@ class OpenAICompatibleProvider:
         requires_api_key: bool | None = None,
     ) -> None:
         parsed = urlparse(endpoint)
-        if parsed.scheme not in {"https", "http"} or not parsed.netloc:
-            raise ValueError("provider endpoint must be an absolute HTTP(S) URL")
+        _validate_remote_transport(endpoint)
         loopback = {"127.0.0.1", "localhost", "::1"}
-        allow_insecure = os.environ.get("RACEGREEN_ALLOW_INSECURE_HTTP", "").strip() in {
-            "1",
-            "true",
-            "yes",
-        }
-        if parsed.scheme == "http" and parsed.hostname not in loopback and not allow_insecure:
-            raise ValueError(
-                "remote provider endpoints must use HTTPS; for trusted local HTTP providers "
-                "(e.g. WSL to host Ollama) set RACEGREEN_ALLOW_INSECURE_HTTP=1"
-            )
         self.endpoint = endpoint.rstrip("/")
         if not self.endpoint.endswith("/v1"):
             self.endpoint += "/v1"
@@ -85,7 +108,7 @@ class OpenAICompatibleProvider:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 if cancel_event is not None and cancel_event.is_set():
                     raise ProviderError("cancelled")
-                payload = json.loads(response.read())
+                payload = json.loads(_read_limited(response))
         except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             if cancel_event is not None and cancel_event.is_set():
                 raise ProviderError("cancelled")
@@ -119,6 +142,10 @@ def probe_provider(config: ProviderConfig) -> dict[str, object]:
     api_key_env = config.api_key_env
     requires_api_key = config.requires_api_key
     timeout_seconds = config.timeout_seconds
+    try:
+        _validate_remote_transport(endpoint)
+    except ValueError as exc:
+        raise ProviderError(str(exc)) from exc
     api_key = os.environ.get(api_key_env)
     if requires_api_key and not api_key:
         raise ProviderError(f"provider credential is missing: {api_key_env}")
@@ -132,7 +159,7 @@ def probe_provider(config: ProviderConfig) -> dict[str, object]:
         headers["Authorization"] = "Bearer " + api_key
     try:
         with urlopen(Request(url, headers=headers, method="GET"), timeout=timeout_seconds) as response:
-            payload = json.loads(response.read())
+            payload = json.loads(_read_limited(response))
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         detail = str(exc).strip().replace("\n", " ")
         if len(detail) > 200:
