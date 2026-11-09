@@ -1,0 +1,115 @@
+name: RaceGreen verified agent race
+description: Run bounded coding agents, require full-suite confirmation, and upload a reviewable winner.
+
+inputs:
+  task:
+    description: Task prompt for the agents.
+    required: true
+  verification-command:
+    description: Full-suite command, for example "pytest -q".
+    required: true
+  agents:
+    description: Number of agents.
+    required: false
+    default: "2"
+  max-concurrency:
+    description: Maximum concurrent agents.
+    required: false
+    default: "2"
+  winner-policy:
+    description: first_confirmed, best_of_confirmed, or consensus.
+    required: false
+    default: first_confirmed
+  artifacts-root:
+    description: Optional artifacts directory.
+    required: false
+    default: ""
+  require-approval:
+    description: Do not auto-export the winner patch.
+    required: false
+    default: "false"
+  python-version:
+    description: Python version used to install RaceGreen.
+    required: false
+    default: "3.12"
+
+outputs:
+  run-id:
+    description: Persisted RaceGreen run ID.
+    value: ${{ steps.race.outputs.run-id }}
+  state:
+    description: Final run state.
+    value: ${{ steps.race.outputs.state }}
+  winner-candidate-id:
+    description: Confirmed winner candidate ID, if any.
+    value: ${{ steps.race.outputs.winner-candidate-id }}
+  artifacts-root:
+    description: Directory containing persisted RaceGreen artifacts.
+    value: ${{ steps.artifacts.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install RaceGreen
+      shell: bash
+      run: python -m pip install "${{ github.action_path }}"
+    - name: Resolve artifacts path
+      id: artifacts
+      shell: bash
+      env:
+        RG_ARTIFACTS: ${{ inputs.artifacts-root }}
+      run: |
+        set -euo pipefail
+        path="${RG_ARTIFACTS:-$RUNNER_TEMP/racegreen-artifacts}"
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+    - name: Run race
+      id: race
+      shell: bash
+      env:
+        RG_TASK: ${{ inputs.task }}
+        RG_COMMAND: ${{ inputs.verification-command }}
+        RG_AGENTS: ${{ inputs.agents }}
+        RG_MAX_CONCURRENCY: ${{ inputs.max-concurrency }}
+        RG_POLICY: ${{ inputs.winner-policy }}
+        RG_ARTIFACTS: ${{ steps.artifacts.outputs.path }}
+        RG_REQUIRE_APPROVAL: ${{ inputs.require-approval }}
+      run: |
+        set -euo pipefail
+        args=(
+          --agents "$RG_AGENTS"
+          --max-concurrency "$RG_MAX_CONCURRENCY"
+          --winner-policy "$RG_POLICY"
+          --verification-command "$RG_COMMAND"
+          --artifacts-root "$RG_ARTIFACTS"
+          --no-progress
+        )
+        if [[ "$RG_REQUIRE_APPROVAL" == "true" ]]; then
+          args+=(--require-approval)
+        fi
+        racegreen race "$GITHUB_WORKSPACE" "$RG_TASK" "${args[@]}" > racegreen-summary.json
+        python - <<'PY'
+        import json
+        import os
+        from pathlib import Path
+
+        summary = json.loads(Path("racegreen-summary.json").read_text(encoding="utf-8"))
+        winner = summary.get("winner") or {}
+        output = Path(os.environ["GITHUB_OUTPUT"])
+        with output.open("a", encoding="utf-8") as stream:
+            stream.write(f"run-id={summary.get('run_id', '')}\n")
+            stream.write(f"state={summary.get('state', '')}\n")
+            stream.write(f"winner-candidate-id={winner.get('candidate_id', '')}\n")
+        PY
+    - name: Upload RaceGreen artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: racegreen-results
+        path: |
+          racegreen-summary.json
+          ${{ steps.artifacts.outputs.path }}
+        if-no-files-found: warn
+

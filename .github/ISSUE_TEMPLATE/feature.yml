@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a behavior change with its safety and verification impact.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user-visible problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+      description: Include failure modes and defaults.
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Safety and verification impact
+      description: Does this affect full-suite confirmation, candidate immutability, isolation, cancellation, or integration?
+    validations:
+      required: true
