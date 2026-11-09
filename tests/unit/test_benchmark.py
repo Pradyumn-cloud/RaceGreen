@@ -51,6 +51,86 @@ def test_analysis_handles_fake_jsonl(tmp_path: Path) -> None:
     assert summary["full_suite_runs_avoided"] == 0
 
 
+def test_analysis_compares_arms_and_single_agent(tmp_path: Path) -> None:
+    results = tmp_path / "arms.jsonl"
+    records = [
+        {
+            "event": "task_result",
+            "arm": "single",
+            "control": False,
+            "winner_declared": True,
+            "held_out_passed": True,
+            "time_to_resolve_seconds": 10,
+            "duration_seconds": 10,
+        },
+        {
+            "event": "task_result",
+            "arm": "racegreen",
+            "control": False,
+            "winner_declared": True,
+            "held_out_passed": True,
+            "time_to_resolve_seconds": 8,
+            "duration_seconds": 8,
+        },
+    ]
+    results.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [sys.executable, "scripts/analyze_results.py", str(results)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    summary = json.loads(completed.stdout)
+
+    assert summary["by_arm"]["single"]["resolved_rate"] == 1.0
+    assert summary["by_arm"]["racegreen"]["resolved_rate"] == 1.0
+    assert summary["by_arm"]["racegreen"]["bootstrap_resolved_rate_95ci"] == [1.0, 1.0]
+    delta = summary["comparison"]["single_vs_racegreen"]
+    assert delta["resolved_rate_delta"] == 0.0
+    assert delta["median_duration_seconds_delta"] == -2.0
+
+
+def test_analysis_bootstrap_uses_all_repair_tasks(tmp_path: Path) -> None:
+    results = tmp_path / "arms.jsonl"
+    records = [
+        {
+            "event": "task_result",
+            "arm": "racegreen",
+            "control": False,
+            "winner_declared": True,
+            "held_out_passed": True,
+            "duration_seconds": 1,
+        },
+        {
+            "event": "task_result",
+            "arm": "racegreen",
+            "control": False,
+            "winner_declared": True,
+            "held_out_passed": False,
+            "duration_seconds": 1,
+        },
+    ]
+    results.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [sys.executable, "scripts/analyze_results.py", str(results)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    summary = json.loads(completed.stdout)
+
+    assert summary["by_arm"]["racegreen"]["resolved_rate"] == 0.5
+    assert summary["by_arm"]["racegreen"]["bootstrap_resolved_rate_95ci"] == [0.0, 1.0]
+
+
 def test_flaky_and_unrelated_contracts_are_explicit() -> None:
     tasks = build_tasks()
     flaky = next(task for task in tasks if task["kind"] == "flaky")
