@@ -16,4 +16,4 @@ class VerificationEvidence:
     attempt_number: int
     earlier_failures: tuple[str, ...]
     baseline_failing_set_hash: str = ""
-    complete_full_suite: bool = True
+    complete_full_suite: bool = False

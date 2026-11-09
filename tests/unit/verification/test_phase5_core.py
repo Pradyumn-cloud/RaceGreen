@@ -11,6 +11,13 @@ def test_winner_atomic():
 
 
 def test_evidence_typed():
-    e = VerificationEvidence("c1", "h1", "b1", ("pytest", "-q"), "fp", "jh", 1, ())
+    e = VerificationEvidence(
+        "c1", "h1", "b1", ("pytest", "-q"), "fp", "jh", 1, (), complete_full_suite=True
+    )
     assert e.complete_full_suite is True
     assert e.argv == ("pytest", "-q")
+    assert (
+        VerificationEvidence("c1", "h1", "b1", ("pytest",), "", "jh", 0, ())
+        .complete_full_suite
+        is False
+    )

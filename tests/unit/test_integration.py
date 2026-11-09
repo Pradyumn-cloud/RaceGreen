@@ -74,3 +74,12 @@ def test_apply_patch_rejects_stale_target(tmp_path: Path) -> None:
     result = IntegrationManager().apply_patch(repo, patch, base)
 
     assert result["status"] == "stale_target"
+
+
+def test_apply_patch_rejects_dirty_target(tmp_path: Path) -> None:
+    repo, base, patch = _repo(tmp_path)
+    (repo / "app.py").write_text("value = 3\n", encoding="utf-8")
+
+    result = IntegrationManager().apply_patch(repo, patch, base)
+
+    assert result["status"] == "dirty_target"

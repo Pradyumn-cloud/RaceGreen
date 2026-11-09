@@ -5,6 +5,23 @@ import pytest
 from racegreen.workspace.manager import UnsafeWorkspaceError, WorkspaceManager
 
 
+def test_manifest_rejects_branches_outside_the_run(tmp_path: Path) -> None:
+    payload = {
+        "run_id": "run-1",
+        "workspaces": [
+            {
+                "agent_id": "agent-1",
+                "path": str(tmp_path / "worktrees" / "agent-1"),
+                "branch": "main",
+                "base_commit": "abc",
+            }
+        ],
+    }
+
+    with pytest.raises(UnsafeWorkspaceError, match="not owned by this run"):
+        WorkspaceManager._decode_workspaces(payload, expected_root=tmp_path)
+
+
 def test_dirty_repository_requires_explicit_opt_in(tmp_path: Path) -> None:
     pytest.importorskip("subprocess").run(["git", "init", str(tmp_path)], check=True)
     (tmp_path / "README").write_text("initial\n", encoding="utf-8")

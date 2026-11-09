@@ -48,9 +48,47 @@ failure, and broad-change. Tasks 1–18 are the development split and the
 remainder are held-out test tasks; every manifest contains the frozen task-list
 hash. Tier 2 external repository tasks remain pending until their licenses,
 commits, setup locks, and reproducible fixtures are reviewed. Analysis includes
-deterministic bootstrap confidence intervals, per-stratum rates, cost per
-resolved task, regret against the fastest resolved task, and a solved-by-time
-curve.
+deterministic bootstrap confidence intervals, per-stratum rates, and a
+solved-by-time curve. Provider cost and regret against the fastest resolved
+task are not yet reported by the offline replay harness.
+
+## Development-split replay result
+
+The final development-split replay is stored at `.bench/pipeline-dev-final.jsonl`
+and can be reproduced with:
+
+```bash
+uv run python scripts/analyze_results.py .bench/pipeline-dev-final.jsonl
+```
+
+The run contains 192 records: 24 development tasks across eight arms, including
+144 repair records and 48 controls. Every arm resolved all 18 repair tasks per
+arm (`resolved_rate = 1.0`, bootstrap 95% CI `[1.0, 1.0]`) with
+`false_winner_rate = 0.0`. Across the full run, the harness recorded 145
+full-suite runs avoided and a median duration of 10.98 seconds.
+
+| Arm | Median seconds | Full-suite runs avoided |
+| --- | ---: | ---: |
+| `single` | 10.70 | 6 |
+| `full_suite_only` | 10.70 | 5 |
+| `no_prefilter` | 10.73 | 29 |
+| `sequential_retry` | 10.88 | 29 |
+| `no_selection` | 11.63 | 29 |
+| `racegreen` | 11.67 | 27 |
+| `parallel_wait_all` | 11.95 | 10 |
+| `wait_all_no_cancel` | 12.04 | 10 |
+
+This result validates the pipeline, event, confirmation, and arbitration
+protocols against checked-in oracle and control patches. It is an
+`offline-replay`/`oracle-replay` run, not a live-model quality measurement.
+`oracle_pass_count` and `held_out_discrimination_count` are `null` because the
+pipeline records do not contain validator-only fields. The replay also does not
+measure provider cost, and `no_selection`, `full_suite_only`, and
+`wait_all_no_cancel` remain partially overlapping protocol arms. Docker
+verification was unit-tested but was not exercised against a live Docker daemon
+in this benchmark. The development split is not the held-out test split; do not
+present these numbers as a generalization claim.
+
 
 ## Phase 8 benchmark sequence
 

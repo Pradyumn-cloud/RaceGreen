@@ -7,6 +7,7 @@ import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypeGuard
 
 from .git import GitError, add_worktree, inspect_repository, remove_worktree
 from .models import AgentWorkspace, RunLayout
@@ -14,6 +15,15 @@ from .models import AgentWorkspace, RunLayout
 
 class UnsafeWorkspaceError(RuntimeError):
     """Raised when setup could risk user-owned data."""
+
+
+def _valid_agent_id(agent_id: object) -> TypeGuard[str]:
+    return (
+        isinstance(agent_id, str)
+        and bool(agent_id)
+        and agent_id not in {".", ".."}
+        and Path(agent_id).name == agent_id
+    )
 
 
 class WorkspaceManager:
@@ -47,7 +57,7 @@ class WorkspaceManager:
 
     def create_agent_workspace(self, layout: RunLayout, agent_id: str) -> AgentWorkspace:
         self._validate_layout(layout)
-        if not agent_id or Path(agent_id).name != agent_id:
+        if not _valid_agent_id(agent_id):
             raise UnsafeWorkspaceError("Agent IDs must be non-empty single path components")
         if any(item.agent_id == agent_id for item in self._read_workspaces(layout)):
             raise UnsafeWorkspaceError(f"Agent workspace already exists: {agent_id}")
@@ -63,8 +73,9 @@ class WorkspaceManager:
         try:
             remove_worktree(self.repository.root, workspace)
         except GitError:
-            pass
-        # update manifest
+            # Keep the ownership entry so a later cleanup can retry rather than
+            # silently orphaning a worktree we created.
+            return
         current = [w for w in self._read_workspaces(layout) if w.agent_id != workspace.agent_id]
         self._write_manifest(layout, tuple(current))
 
@@ -139,22 +150,45 @@ class WorkspaceManager:
     ) -> tuple[AgentWorkspace, ...]:
         if not isinstance(payload, dict) or not isinstance(payload.get("workspaces"), list):
             raise UnsafeWorkspaceError("Malformed RaceGreen ownership manifest")
+        run_id = payload.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            raise UnsafeWorkspaceError("Malformed RaceGreen ownership manifest: run_id")
         result: list[AgentWorkspace] = []
         for item in payload["workspaces"]:
             if not isinstance(item, dict):
                 raise UnsafeWorkspaceError("Malformed workspace ownership entry")
-            path = Path(str(item["path"])).resolve()
+            agent_id = item.get("agent_id")
+            raw_path = item.get("path")
+            branch = item.get("branch")
+            base_commit = item.get("base_commit")
+            if (
+                not _valid_agent_id(agent_id)
+                or not isinstance(raw_path, str)
+                or not isinstance(branch, str)
+                or not isinstance(base_commit, str)
+                or not base_commit
+            ):
+                raise UnsafeWorkspaceError("Malformed workspace ownership entry")
+            if branch != f"racegreen/{run_id}/{agent_id}":
+                raise UnsafeWorkspaceError(
+                    f"Workspace branch is not owned by this run: {branch}"
+                )
+            path = Path(raw_path).resolve()
+            if path.name != agent_id:
+                raise UnsafeWorkspaceError(
+                    f"Workspace path does not match its agent ID: {path}"
+                )
             if expected_root is not None:
                 worktree_root = (expected_root / "worktrees").resolve()
                 if path.parent != worktree_root:
                     raise UnsafeWorkspaceError(f"Workspace escapes the owned run directory: {path}")
             result.append(
                 AgentWorkspace(
-                    str(payload["run_id"]),
-                    str(item["agent_id"]),
+                    run_id,
+                    agent_id,
                     path,
-                    str(item["branch"]),
-                    str(item["base_commit"]),
+                    branch,
+                    base_commit,
                 )
             )
         return tuple(result)

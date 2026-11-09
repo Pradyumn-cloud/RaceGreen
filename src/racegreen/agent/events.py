@@ -8,16 +8,57 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_SECRET = re.compile(r"(?i)(api[_-]?key|token|secret|password)(\s*[:=]\s*)([^\s,]+)")
+_SECRET = re.compile(
+    r"(?i)(api[_-]?key|token|secret|password|authorization|credential|"
+    r"access[_-]?key|private[_-]?key)(\s*[:=]\s*)((?:bearer|basic)\s+)?([^\s,]+)"
+)
+_BEARER = re.compile(r"(?i)\b(bearer\s+)([A-Za-z0-9._~+/=-]+)")
+_SECRET_FLAG = re.compile(
+    r"(?i)(--?(?:api[_-]?key|token|secret|password|authorization|credential|"
+    r"access[_-]?key|private[_-]?key)\s+)([^\s,]+)"
+)
+_SECRET_KEY = re.compile(
+    r"(?i)(api[_-]?key|token|secret|password|authorization|credential|"
+    r"access[_-]?key|private[_-]?key)"
+)
+_SECRET_FLAG_OPTION = re.compile(
+    r"(?i)^--?(?:api[_-]?key|token|secret|password|authorization|credential|"
+    r"access[_-]?key|private[_-]?key)$"
+)
+
+
+def _redact_sequence(value: list[object] | tuple[object, ...]) -> list[object]:
+    result: list[object] = []
+    redact_next = False
+    for item in value:
+        if redact_next and isinstance(item, str):
+            result.append("[REDACTED]")
+            redact_next = False
+            continue
+        if isinstance(item, str) and _SECRET_FLAG_OPTION.fullmatch(item):
+            redact_next = True
+        result.append(_redact(item))
+    return result
 
 
 def _redact(value: object) -> object:
     if isinstance(value, str):
-        return _SECRET.sub(r"\1\2[REDACTED]", value)
+        redacted = _SECRET.sub(r"\1\2\3[REDACTED]", value)
+        redacted = _BEARER.sub(r"\1[REDACTED]", redacted)
+        return _SECRET_FLAG.sub(r"\1[REDACTED]", redacted)
     if isinstance(value, dict):
-        return {str(key): _redact(item) for key, item in value.items()}
+        redacted_dict: dict[str, object] = {}
+        for key, item in value.items():
+            name = str(key)
+            if name.lower() not in {"api_key_env", "requires_api_key"} and _SECRET_KEY.search(name):
+                redacted_dict[name] = "[REDACTED]"
+            else:
+                redacted_dict[name] = _redact(item)
+        return redacted_dict
     if isinstance(value, list):
-        return [_redact(item) for item in value]
+        return _redact_sequence(value)
+    if isinstance(value, tuple):
+        return tuple(_redact_sequence(value))
     return value
 
 
@@ -56,8 +97,10 @@ class EventStore:
                     "agent_id": agent_id,
                     "timestamp": datetime.now(UTC).isoformat(),
                     "rejected_event": event,
-                    **_redact(data),
                 }
+                redacted = _redact(data)
+                if isinstance(redacted, dict):
+                    rejected.update({str(key): item for key, item in redacted.items()})
                 try:
                     with self.path.open("a", encoding="utf-8") as stream:
                         stream.write(json.dumps(rejected, sort_keys=True) + "\n")

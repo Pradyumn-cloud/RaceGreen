@@ -18,6 +18,7 @@ const COMMON_EVENT_TYPES = [
   "run_failed",
   "run.unverifiable",
   "agent_started",
+  "agent.hedged",
   "agent_status",
   "agent_finished",
   "agent_failed",
@@ -31,6 +32,7 @@ const COMMON_EVENT_TYPES = [
   "candidate.rejected",
   "candidate.confirmed_but_not_selected",
   "arbiter.winner_declared",
+  "arbiter.policy_decision",
   "verification_started",
   "verification_finished",
 ];
@@ -57,6 +59,9 @@ const state = {
   snapshotTimer: null,
   loadToken: 0,
   drawerCandidate: null,
+  compareRun: "",
+  compareSnapshot: null,
+  compareToken: 0,
   toastTimer: null,
   lastError: "",
   lastErrorAt: 0,
@@ -321,6 +326,9 @@ async function selectRun(runId) {
     state.pending = 0;
     state.follow = true;
     state.eventFilters = { type: "", agent: "", candidate: "", q: "" };
+    state.compareRun = "";
+    state.compareSnapshot = null;
+    state.compareToken += 1;
     closeDrawer();
     renderRuns();
     setActiveTab("candidates");
@@ -388,6 +396,10 @@ function renderTab() {
   }
   if (state.tab === "agents") {
     renderAgents();
+    return;
+  }
+  if (state.tab === "compare") {
+    renderCompare();
     return;
   }
   renderCandidates();
@@ -499,6 +511,112 @@ function renderAgents() {
       </article>`,
     )
     .join("");
+}
+
+function snapshotMetrics(snapshot) {
+  const run = snapshot?.run || {};
+  const candidates = snapshot?.candidates || [];
+  const states = {};
+  for (const candidate of candidates) {
+    const key = String(candidate.state || "unknown");
+    states[key] = (states[key] || 0) + 1;
+  }
+  const created = parseDate(run.created_at);
+  const updated = parseDate(run.updated_at);
+  const duration =
+    created && updated ? Math.max(0, (updated.getTime() - created.getTime()) / 1000) : null;
+  return {
+    state: run.state || "unknown",
+    base: run.base_commit || "—",
+    winner: snapshot?.winner?.candidate_id || "—",
+    evidence: snapshot?.winner?.evidence_complete === true,
+    candidates: snapshot?.counts?.candidates ?? candidates.length,
+    agents: snapshot?.counts?.agents ?? (snapshot?.agents || []).length,
+    events: snapshot?.counts?.events ?? 0,
+    duration,
+    states,
+  };
+}
+
+function compareCell(value) {
+  return `<td>${esc(value)}</td>`;
+}
+
+function renderCompareBody() {
+  const body = $("#compareBody");
+  if (!body) return;
+  const left = snapshotMetrics(state.snapshot);
+  const right = state.compareSnapshot ? snapshotMetrics(state.compareSnapshot) : null;
+  if (!right) {
+    body.innerHTML = `<div class="empty">Loading comparison run...</div>`;
+    return;
+  }
+  const rows = [
+    ["State", left.state, right.state],
+    ["Winner", left.winner, right.winner],
+    ["Full-suite evidence", left.evidence ? "recorded" : "not recorded", right.evidence ? "recorded" : "not recorded"],
+    ["Candidates", left.candidates, right.candidates],
+    ["Agents", left.agents, right.agents],
+    ["Events", left.events, right.events],
+    [
+      "Duration",
+      left.duration === null ? "—" : `${left.duration.toFixed(1)}s`,
+      right.duration === null ? "—" : `${right.duration.toFixed(1)}s`,
+    ],
+    ["Base commit", short(left.base, 16), short(right.base, 16)],
+    ["Candidate states", JSON.stringify(left.states), JSON.stringify(right.states)],
+  ];
+  body.innerHTML = `<div class="candidate-meta">Selected run is the left column; comparison run is the right column. Values are persisted projections, not re-verification.</div>
+    <table class="compare-table"><thead><tr><th>Metric</th><th>${esc(state.selected)}</th><th>${esc(state.compareRun)}</th></tr></thead><tbody>
+    ${rows.map(([name, a, b]) => `<tr><th>${esc(name)}</th>${compareCell(a)}${compareCell(b)}</tr>`).join("")}
+    </tbody></table>`;
+}
+
+function renderCompare() {
+  const body = $("#tabBody");
+  const options = state.runs.filter((run) => run.run_id !== state.selected);
+  if (!options.length) {
+    body.innerHTML = `<div class="empty">At least two persisted runs are needed for a comparison.</div>`;
+    return;
+  }
+  if (!state.compareRun || !options.some((run) => run.run_id === state.compareRun)) {
+    state.compareRun = options[0].run_id;
+    state.compareSnapshot = null;
+  }
+  body.innerHTML = `<div class="timeline-tools">
+      <select id="compareRun" class="select" aria-label="Choose comparison run">
+        ${options.map((run) => `<option value="${esc(run.run_id)}">${esc(run.run_id)} · ${esc(run.state)}</option>`).join("")}
+      </select>
+    </div>
+    <div id="compareBody"><div class="empty">Loading comparison run...</div></div>`;
+  const select = $("#compareRun");
+  select.value = state.compareRun;
+  select.addEventListener("change", (event) => {
+    state.compareRun = event.target.value;
+    state.compareSnapshot = null;
+    state.compareToken += 1;
+    renderCompareBody();
+    loadCompareSnapshot();
+  });
+  renderCompareBody();
+  if (!state.compareSnapshot || state.compareSnapshot.run?.run_id !== state.compareRun) {
+    loadCompareSnapshot();
+  }
+}
+
+async function loadCompareSnapshot() {
+  const token = ++state.compareToken;
+  const runId = state.compareRun;
+  try {
+    const snapshot = await api(`/api/runs/${encodeURIComponent(runId)}`);
+    if (token !== state.compareToken || state.compareRun !== runId) return;
+    state.compareSnapshot = snapshot;
+    renderCompareBody();
+  } catch (error) {
+    if (token !== state.compareToken) return;
+    const body = $("#compareBody");
+    if (body) body.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+  }
 }
 
 function renderTimeline() {

@@ -27,9 +27,7 @@ jobs:
       - name: Ruff
         run: uv run ruff check . --select E4,E7,E9,F,I
       - name: Mypy
-        # The legacy modules still have tracked typing debt; keep the release
-        # gate strict for the Phase 7 trace/report surface.
-        run: uv run mypy src/racegreen/storage src/racegreen/report.py src/racegreen/cli.py
+        run: uv run mypy src/racegreen
       - name: Tests
         run: uv run pytest
       - name: Demo quickstart
@@ -39,4 +37,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Dependency audit
-        run: uvx --from pip-audit pip-audit
+        run: uv run --with pip-audit pip-audit
+
+  test-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Tests
+        run: uv run pytest -q
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Coverage
+        run: uv run --with pytest-cov pytest --cov=racegreen --cov-report=term-missing
