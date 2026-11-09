@@ -78,11 +78,36 @@ def add_worktree(repository: Path, path: Path, base_commit: str, branch: str) ->
     if path.exists():
         raise GitError(f"Refusing to overwrite existing worktree path: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    _run_git(repository, "worktree", "add", "-b", branch, str(path), base_commit)
+    # Keep worktree content byte-stable across hosts. Without this, a Windows
+    # core.autocrlf setting checks out CRLF files while Linux uses LF, which
+    # makes candidate patches non-portable and can hide no-op test changes.
+    _run_git(
+        repository,
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.eol=lf",
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        str(path),
+        base_commit,
+    )
     verify_worktree(path, base_commit)
 
 
 def remove_worktree(repository: Path, workspace: AgentWorkspace) -> None:
     """Remove only a known worktree, without forcing away uncommitted changes."""
-    _run_git(repository, "worktree", "remove", str(workspace.path))
-    _run_git(repository, "branch", "-d", workspace.branch)
+    expected_branch = f"racegreen/{workspace.run_id}/{workspace.agent_id}"
+    if workspace.branch != expected_branch:
+        raise GitError(
+            f"Refusing to delete a branch not owned by this run: {workspace.branch}"
+        )
+    if workspace.path.exists():
+        _run_git(repository, "worktree", "remove", str(workspace.path))
+    else:
+        # The directory may have been removed after an interruption. Prune only
+        # missing worktree metadata before deleting our owned branch.
+        _run_git(repository, "worktree", "prune")
+    _run_git(repository, "branch", "-D", workspace.branch)
