@@ -1,9 +1,10 @@
-"""Process registry and POSIX-only cancellation."""
+"""Process registry and cross-platform process-tree cancellation."""
 
 from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -36,6 +37,10 @@ class CancellationCoordinator:
     def is_cancelling(self) -> bool:
         return self._cancelling.is_set()
 
+    def wait(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for cancellation; return True if set."""
+        return self._cancelled.wait(timeout=timeout)
+
     def request_cancel(self) -> float:
         with self._lock:
             if self._cancel_requested_at is None:
@@ -57,44 +62,54 @@ class CancellationCoordinator:
             return list(self._processes.values())
 
     def terminate_all(self, grace_seconds: float = 2.0) -> tuple[int, int]:
-        """POSIX-only termination of process groups. SIGTERM then SIGKILL."""
+        """Terminate registered process trees, then escalate to a hard kill."""
         with self._lock:
             procs = list(self._processes.values())
         terminated = 0
         survivors_before = 0
-        # Send SIGTERM to process groups
+        windows = os.name == "nt"
+        # Ask each process tree to stop first.
         for rec in procs:
             try:
-                if hasattr(os, "killpg") and rec.pgid > 0:
+                if windows:
+                    subprocess.run(
+                        ["taskkill", "/T", "/PID", str(rec.pid)],
+                        capture_output=True,
+                        check=False,
+                        timeout=5,
+                    )
+                elif hasattr(os, "killpg") and rec.pgid > 0:
                     os.killpg(rec.pgid, signal.SIGTERM)
                 else:
-                    try:
-                        os.kill(rec.pid, signal.SIGTERM)
-                    except Exception:
-                        pass
+                    os.kill(rec.pid, signal.SIGTERM)
                 terminated += 1
             except ProcessLookupError:
                 pass
             except Exception:
                 pass
         time.sleep(grace_seconds)
-        # Send SIGKILL and scan survivors
+        # Force-kill trees that survived the grace period.
         for rec in procs:
             try:
-                if hasattr(os, "killpg") and rec.pgid > 0:
+                if windows:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(rec.pid)],
+                        capture_output=True,
+                        check=False,
+                        timeout=5,
+                    )
+                elif hasattr(os, "killpg") and rec.pgid > 0:
+                    killpg = getattr(os, "killpg")
                     try:
-                        os.killpg(rec.pgid, 0)
-                        os.killpg(rec.pgid, signal.SIGKILL)
+                        killpg(rec.pgid, 0)
+                        killpg(rec.pgid, getattr(signal, "SIGKILL", signal.SIGTERM))
                         survivors_before += 1
                     except ProcessLookupError:
                         pass
                 else:
                     try:
                         os.kill(rec.pid, 0)
-                        try:
-                            os.kill(rec.pid, signal.SIGKILL)
-                        except Exception:
-                            pass
+                        os.kill(rec.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
                         survivors_before += 1
                     except ProcessLookupError:
                         pass
