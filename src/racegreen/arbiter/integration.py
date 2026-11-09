@@ -117,6 +117,14 @@ class IntegrationManager:
                 return {"status": "error", "reason": head.stderr.strip()}
             if head.stdout.strip() != base_commit:
                 return {"status": "stale_target", "reason": "target HEAD changed since the run started"}
+            status = self._run(["git", "-C", str(repo), "status", "--porcelain"])
+            if status.returncode != 0:
+                return {"status": "error", "reason": status.stderr.strip()}
+            if status.stdout.strip():
+                return {
+                    "status": "dirty_target",
+                    "reason": "target working tree has uncommitted changes",
+                }
             checked = self._run(["git", "-C", str(repo), "apply", "--check", str(patch)])
             if checked.returncode != 0:
                 return {"status": "conflict", "reason": checked.stderr.strip()}
