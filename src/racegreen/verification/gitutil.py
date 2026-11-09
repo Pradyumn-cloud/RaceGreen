@@ -51,6 +51,7 @@ def snapshot_patch_stable(worktree: Path, base_commit: str, destination: Path, e
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-renames",
+                "--ignore-cr-at-eol",
                 base_commit,
                 tree_sha,
             ],
@@ -61,7 +62,10 @@ def snapshot_patch_stable(worktree: Path, base_commit: str, destination: Path, e
         )
         if diff.returncode not in (0, 1):  # 0 no diff, 1 diff exists
             raise RuntimeError("failed to generate diff")
-        patch = diff.stdout
+        # Normalize line endings so a candidate produced on Windows applies to
+        # an LF checkout on Linux (and vice versa). Git patch framing is LF;
+        # a CR is only ever part of a text line here.
+        patch = diff.stdout.replace(b"\r\n", b"\n")
         # apply --check
         subprocess.run(
             ["git", "apply", "--check", "--whitespace=nowarn"],
@@ -85,6 +89,10 @@ def apply_check(
     command = ["git", "apply", "--check", "--whitespace=nowarn"]
     if reverse:
         command.append("--reverse")
+    # Context lines may have been normalized to LF while the agent worktree
+    # still has CRLF files on Windows. Ignoring whitespace here checks the
+    # patch's structure without rejecting a platform line-ending difference.
+    command.append("--ignore-whitespace")
     res = subprocess.run(
         command,
         input=patch_bytes,

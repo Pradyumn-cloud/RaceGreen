@@ -32,7 +32,19 @@ TEST_CONFIG_FILES = {
     "pytest.ini",
     "tox.ini",
     "setup.cfg",
+    "pyproject.toml",
 }
+
+
+def is_test_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").lstrip("./")
+    parts = normalized.split("/")
+    if not parts or not parts[-1]:
+        return False
+    name = parts[-1]
+    if name.startswith("test_") or name.endswith("_test.py"):
+        return True
+    return any(part in {"tests", "test", "__tests__"} for part in parts[:-1])
 
 
 @dataclass
@@ -99,13 +111,26 @@ class PreFilter:
             rejections.append(PreFilterRejection("symlink_detected", summ[:200], patch_hash, candidate_id))
         if "160000" in summ or "mode 160000" in summ:
             rejections.append(PreFilterRejection("submodule_detected", summ[:200], patch_hash, candidate_id))
-        if b"\x00" in patch_bytes and not self.config.allow_binaries:
-            if re.search(r"^- -\s+", nst, flags=re.MULTILINE):
-                rejections.append(PreFilterRejection("binary_artifact", "binary file change detected", patch_hash, candidate_id))
+        if (
+            b"\x00" in patch_bytes
+            and not self.config.allow_binaries
+            and re.search(r"^- -\s+", nst, flags=re.MULTILINE)
+        ):
+            rejections.append(
+                PreFilterRejection(
+                    "binary_artifact",
+                    "binary file change detected",
+                    patch_hash,
+                    candidate_id,
+                )
+            )
         for p in changed:
             name = os.path.basename(p)
             if name in TEST_CONFIG_FILES:
                 rejections.append(PreFilterRejection("test_config_tamper", f"edit to {p}", patch_hash, candidate_id))
+                break
+            if is_test_path(p):
+                rejections.append(PreFilterRejection("test_file_edit", f"edit to {p}", patch_hash, candidate_id))
                 break
             if name in {".gitattributes", ".gitmodules"}:
                 rejections.append(PreFilterRejection("vcs_metadata_change", f"edit to {p}", patch_hash, candidate_id))
@@ -126,6 +151,10 @@ class PreFilter:
             changed_paths=tuple(changed),
         )
 
+    def changed_paths(self, patch_bytes: bytes) -> tuple[str, ...]:
+        """Return changed paths without applying heuristic rejection rules."""
+        return self._extract_paths(numstat(patch_bytes))
+
     def _count_files(self, patch_bytes: bytes) -> int:
         nst = numstat(patch_bytes)
         return len([line for line in nst.splitlines() if line.strip()])
@@ -137,7 +166,12 @@ class PreFilter:
                 continue
             parts = line.split("\t")
             if len(parts) >= 3:
-                p = parts[2]
+                added, deleted, p = parts[0], parts[1], parts[2]
+                # A path with no content change (for example a line-ending
+                # normalization that Git still emits on Windows) is not a
+                # candidate modification and must not trigger test tampering.
+                if added == "0" and deleted == "0":
+                    continue
                 if p == "-":
                     continue
                 paths.append(p)
